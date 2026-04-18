@@ -1,0 +1,54 @@
+source_label,target_labelParti communiste français,gaucheParti socialiste,gaucheParti socialiste unifié,gaucheParti radical,gaucheMouvement des radicaux de gauche,gaucheFédération de la gauche démocrate et socialiste,gaucheGauche radicale,gaucheLutte ouvrière,gaucheLigue communiste révolutionnaire,gaucheParti des travailleurs,gaucheOrganisation communiste internationaliste,gaucheParti communiste révolutionnaire,gaucheMouvement des citoyens,gaucheParti socialiste démocrate,gaucheindépendant de gauche,gaucherépublicain-socialiste,gaucherépublicains-socialistes,gaucheLes Verts,gaucheEcologie les Verts,gaucheGénération écologie,gaucheCentre démocrate,centreCentre républicain,centreCentre des démocrates sociaux,centreCentre démocrate modéré,centreCentre national des indépendants et paysans,centreUnion pour la démocratie française,centreMouvement républicain populaire,centreDémocratie chrétienne,centreParti républicain,centreMouvement des réformateurs,centreClub Technique et démocratie,centreUnion des forces démocratiques,centrecentristes,centreRassemblement pour la République,droiteUnion pour la nouvelle République,droiteUnion des démocrates pour la République,droiteDroite républicaine / gaulliste,droiteGaullistes indépendants,droiteRassemblement du peuple français,droiteFront national,droiteChasse pêche nature traditions,droiteCoordination rurale,droiteUnion des indépendants,droiteAlliance populaire,droiteFédération des républicains de progrès,droiteUnion et action libérale et sociale,droiteNon mentionné,non classeSans parti,non classeapolitique,non classe
+source_label,target_label
+SFIO,gauche
+CNIP / Indépendants et paysans,droite
+RPR,droite
+FGDS,gauche
+UDF,centre
+Indépendant,centre
+UNR,droite
+Républicains indépendants,droite
+Mouvement réformateur,centre
+NERA,droite
+Parti radical / radical-socialiste,gauche
+Libéraux / indépendants,droite
+Gauche autogestionnaire / résistante,gauche
+Parti de la loi naturelle,droite
+Socialiste indépendant / social-démocrate,gauche
+Divers historiques / protestataires,droite
+Écologistes divers,gauche
+Centre,centre
+Divers droite républicaine,droite
+Centre réformateur / démocratie et progrès,centre
+Gauche non communiste,gauche
+Divers républicain,droite
+Extrême gauche marxiste-léniniste,gauche
+UDR,droite
+CPNT,droite
+Divers gauche,gauche
+Gaullistes / Ve République,droite
+Parti ouvrier européen,gauche
+Féministe,gauche
+Nouveau contrat social,droite
+Divers droite,droite
+Européens / paneuropéens,centre
+Liste locale / régionale,non classe
+Comité local / divers,non classe
+Droite national-conservatrice,droite
+Droite protestataire,droite
+Gauche dissidente communiste,gauche
+Liste protestataire,non classe
+Liste régionale radicale,gauche
+Parti national démocrate,droite
+Régionaliste,non classe
+SFIO autonome,gauche
+Divers centre,centre
+Divers centre / rénovation,centre
+Divers civique,non classe
+Défense agriculteurs,droite
+Extrême droite,droite
+Liste citoyenne,non classe
+Paysans / agrariens,droite
+Travailleurs indépendants,droite
+UNR-UDT,droite
+Élus locaux,non classe
