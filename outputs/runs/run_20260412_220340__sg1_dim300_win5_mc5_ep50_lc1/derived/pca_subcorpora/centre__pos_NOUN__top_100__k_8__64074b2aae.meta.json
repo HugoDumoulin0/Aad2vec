@@ -1,0 +1,14 @@
+{
+  "run_name": "run_20260412_220340__sg1_dim300_win5_mc5_ep50_lc1",
+  "label": "centre",
+  "allowed_pos": [
+    "NOUN"
+  ],
+  "top_n": 100,
+  "n_clusters": 8,
+  "explained_variance_ratio": [
+    0.04262331500649452,
+    0.024929821491241455
+  ],
+  "n_words": 100
+}

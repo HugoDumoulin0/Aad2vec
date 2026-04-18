@@ -1,0 +1,19 @@
+{
+  "training_config": {
+    "vector_size": 300,
+    "window": 5,
+    "min_count": 5,
+    "epochs": 50,
+    "sg": 1,
+    "negative": 5,
+    "sample": 0.001,
+    "lowercase": true
+  },
+  "subcorpora": [
+    "centre",
+    "droite",
+    "gauche",
+    "non_classe"
+  ],
+  "created_at": "2026-04-12T22:10:34.516737"
+}

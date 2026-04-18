@@ -1,0 +1,14 @@
+{
+  "run_name": "run_20260412_220340__sg1_dim300_win5_mc5_ep50_lc1",
+  "label": "gauche",
+  "allowed_pos": [
+    "NOUN"
+  ],
+  "top_n": 100,
+  "n_clusters": 8,
+  "explained_variance_ratio": [
+    0.04702834039926529,
+    0.030685046687722206
+  ],
+  "n_words": 100
+}

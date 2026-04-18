@@ -1,0 +1,12 @@
+{
+  "run_name": "run_20260415_143509__sg1_dim300_win5_mc5_ep50_lc1",
+  "allowed_pos": [
+    "NOUN"
+  ],
+  "top_n": 200,
+  "explained_variance_ratio": [
+    0.04117348790168762,
+    0.028192998841404915
+  ],
+  "n_words": 200
+}
