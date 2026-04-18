@@ -29,7 +29,7 @@ from scipy.linalg import orthogonal_procrustes
 
 import hashlib
 
-OUTPUT_DIR = "./outputs"
+OUTPUT_DIR = "././outputs"
 RUNS_DIR = os.path.join(OUTPUT_DIR, "runs")
 
 

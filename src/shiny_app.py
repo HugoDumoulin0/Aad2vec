@@ -10,7 +10,7 @@ import os
 import json
 import pandas as pd
 
-CORPUS_PATH = "./corpus"
+CORPUS_PATH = "././corpus"
 METADATA_PATH = os.path.join(CORPUS_PATH, "metadata.csv")
 EXPORT_JSON = "subcorpora.json"
 
