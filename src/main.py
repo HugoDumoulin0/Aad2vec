@@ -191,7 +191,7 @@ def load_subcorpora_and_config(path_json):
 # Tokenisation
 #############################################
 
-def tokenize(corpus_liste, lowercase=True, token_representation="surface"):
+def tokenize(corpus_liste, lowercase=True, token_representation="word"):
     nlp = spacy.load("fr_core_news_sm")
     corpus_sentences = []
 
@@ -314,7 +314,11 @@ def process_subcorpora(path_json):
     for label, textes in subcorpora.items():
         print(f"\n=== Traitement du corpus : {label} ===")
 
-        sentences = tokenize(textes, lowercase=lowercase)
+        sentences = tokenize(
+                    textes,
+                    lowercase=lowercase,
+                    token_representation=token_representation
+                )
         if not sentences:
             print("[WARN] Corpus vide après tokenisation.")
             continue
@@ -331,7 +335,7 @@ def process_subcorpora(path_json):
     for textes in subcorpora.values():
         all_texts.extend(textes)
 
-    global_sentences = tokenize(all_texts, lowercase=lowercase)
+    global_sentences = tokenize(all_texts, lowercase=lowercase,token_representation=token_representation)
     global_model_path = os.path.join(run_dirs["models"], "w2v_global.model")
     global_model = train(global_sentences, global_model_path, training_config)
 
