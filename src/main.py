@@ -127,10 +127,7 @@ def load_pipeline_config(path_json):
     return data
 
 
-def build_subcorpora_from_files(path_json, base_path=CORPUS_PATH):
-    config = load_pipeline_config(path_json)
-    groups = config["subcorpora"]
-
+def build_subcorpora_from_files_dict(groups, base_path=CORPUS_PATH):
     subcorpora = {}
 
     for label, files in groups.items():
@@ -177,33 +174,58 @@ def safe_label(label):
 
     return label
 
+def load_subcorpora_and_config(path_json):
+    with open(path_json, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    # rétrocompatibilité ancien format
+    if isinstance(data, dict) and "subcorpora" not in data:
+        return data, {}
+
+    subcorpora_groups = data.get("subcorpora", {})
+    training_config = data.get("training_config", {})
+
+    return subcorpora_groups, training_config
 
 #############################################
 # Tokenisation
 #############################################
 
-def tokenize(corpus_liste, lowercase=True):
+def tokenize(corpus_liste, lowercase=True, token_representation="surface"):
     nlp = spacy.load("fr_core_news_sm")
     corpus_sentences = []
 
     for texte in corpus_liste:
-        if lowercase:
-            texte = texte.lower()
-
         doc = nlp(texte, disable=["ner"])
 
         for sent in doc.sents:
-            tokens = []
+            sent_tokens = []
+
             for token in sent:
-                if token.is_space:
+                if token.is_space or token.is_punct:
                     continue
-                tok = token.text
+
+                if token_representation == "lemma":
+                    tok = token.lemma_
+                else:
+                    tok = token.text
+
+                tok = str(tok).strip()
+
+                if not tok:
+                    continue
+
+                # sécurité spaCy
+                if tok == "-PRON-":
+                    tok = token.text
+
                 if lowercase:
                     tok = tok.lower()
-                tokens.append(tok)
 
-            if tokens:
-                corpus_sentences.append(tokens)
+                sent_tokens.append(tok)
+
+            if sent_tokens:
+                corpus_sentences.append(sent_tokens)
 
     return corpus_sentences
 
@@ -278,8 +300,8 @@ def process_subcorpora(path_json):
     ensure_dirs()
 
     config = load_pipeline_config(path_json)
-    training_config = config.get("training_config", {})
-    subcorpora = build_subcorpora_from_files(path_json)
+    groups, training_config = load_subcorpora_and_config(path_json)
+    subcorpora = build_subcorpora_from_files_dict(groups)
 
     run_name = make_run_name(training_config)
     run_dirs = make_run_dirs(run_name)
@@ -287,6 +309,7 @@ def process_subcorpora(path_json):
     sub_models_dict = {}
 
     lowercase = bool(training_config.get("lowercase", False))
+    token_representation = str(training_config.get("token_representation", "surface"))
 
     for label, textes in subcorpora.items():
         print(f"\n=== Traitement du corpus : {label} ===")
@@ -539,24 +562,37 @@ RUNS_DIR = os.path.join(OUTPUT_DIR, "runs")
 
 
 def make_run_name(training_config):
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    now = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    vector_size = training_config.get("vector_size", 300)
-    window = training_config.get("window", 2)
-    min_count = training_config.get("min_count", 1)
-    epochs = training_config.get("epochs", 50)
-    sg = training_config.get("sg", 1)
-    lowercase = int(bool(training_config.get("lowercase", False)))
+    vector_size = int(training_config.get("vector_size", 300))
+    window = int(training_config.get("window", 2))
+    min_count = int(training_config.get("min_count", 1))
+    epochs = int(training_config.get("epochs", 50))
+    sg = int(training_config.get("sg", 1))
+    negative = int(training_config.get("negative", 5))
+    sample = training_config.get("sample", 0.001)
+    lowercase = int(bool(training_config.get("lowercase", True)))
+    token_representation = str(training_config.get("token_representation", "surface"))
 
-    return (
-        f"run_{timestamp}"
+    token_tag = "lemma" if token_representation == "lemma" else "word"
+
+    # sample rendu lisible
+    sample_tag = str(sample).replace(".", "p")
+
+    run_name = (
+        f"run_{now}"
+        f"__{token_tag}"
+        f"__lc{lowercase}"
         f"__sg{sg}"
-        f"_dim{vector_size}"
-        f"_win{window}"
-        f"_mc{min_count}"
-        f"_ep{epochs}"
-        f"_lc{lowercase}"
+        f"__dim{vector_size}"
+        f"__win{window}"
+        f"__mc{min_count}"
+        f"__ep{epochs}"
+        f"__neg{negative}"
+        f"__s{sample_tag}"
     )
+
+    return run_name
 
 def make_run_dirs(run_name):
     run_dir = os.path.join(RUNS_DIR, run_name)

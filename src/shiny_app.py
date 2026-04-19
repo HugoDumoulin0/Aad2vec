@@ -191,19 +191,32 @@ app_ui = ui.page_fluid(
     ),
 
     ui.row(
-        ui.column(
-            2,
-            ui.input_numeric("negative", "Negative", value=5, min=1, max=50)
-        ),
-        ui.column(
-            2,
-            ui.input_numeric("sample", "Sample", value=0.001, min=0.0, max=0.1, step=0.0001)
-        ),
-        ui.column(
-            2,
-            ui.input_checkbox("lowercase", "Tout en minuscules", value=True)
-        ),
+    ui.column(
+        2,
+        ui.input_numeric("negative", "Negative", value=5, min=1, max=50)
     ),
+    ui.column(
+        2,
+        ui.input_numeric("sample", "Sample", value=0.001, min=0.0, max=0.1, step=0.0001)
+    ),
+    ui.column(
+        2,
+        ui.input_checkbox("lowercase", "Tout en minuscules", value=True)
+    ),
+    
+    ui.column(
+        3,
+        ui.input_select(
+            "token_representation",
+            "Unités d'entraînement",
+            choices={
+                "word": "Formes graphiques",
+                "lemma": "Lemmes"
+            },
+            selected="surface"
+        )
+    ),
+),
 
     ui.hr(),
     
@@ -319,7 +332,21 @@ def server(input, output, session):
     @output
     @render.text
     def json_preview():
-        return json.dumps(groups.get(), indent=2, ensure_ascii=False)
+        payload = {
+            "subcorpora": groups.get(),
+            "training_config": {
+                "vector_size": int(input.vector_size()),
+                "window": int(input.window()),
+                "min_count": int(input.min_count()),
+                "epochs": int(input.epochs()),
+                "sg": int(input.sg()),
+                "negative": int(input.negative()),
+                "sample": float(input.sample()),
+                "lowercase": bool(input.lowercase()),
+                "token_representation": str(input.token_representation()),
+            }
+        }
+        return json.dumps(payload, indent=2, ensure_ascii=False)
 
     @output
     @render.data_frame
@@ -399,11 +426,11 @@ def server(input, output, session):
     @reactive.event(input.save)
     def _save_json():
         subcorpora = groups.get()
-
+    
         if not subcorpora:
             status_msg.set("⚠️ Aucun groupe à exporter.")
             return
-
+    
         payload = {
             "subcorpora": subcorpora,
             "training_config": {
@@ -415,12 +442,13 @@ def server(input, output, session):
                 "negative": int(input.negative()),
                 "sample": float(input.sample()),
                 "lowercase": bool(input.lowercase()),
+                "token_representation": str(input.token_representation()),
             }
         }
-
+    
         with open(EXPORT_JSON, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, ensure_ascii=False)
-
+    
         status_msg.set(f"💾 {EXPORT_JSON} sauvegardé avec succès.")
 
 

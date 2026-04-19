@@ -1,4 +1,3 @@
 {
-  "mode": "open_existing",
-  "run_name": "run_20260415_185800__sg1_dim300_win2_mc5_ep50_lc1"
+  "mode": "train_new"
 }
