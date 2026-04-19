@@ -10,7 +10,7 @@ from shiny import App, ui, reactive, render
 import os
 import json
 
-OUTPUT_DIR = "././outputs"
+OUTPUT_DIR = "../outputs"
 RUNS_DIR = os.path.join(OUTPUT_DIR, "runs")
 EXPORT_JSON = "launcher_choice.json"
 

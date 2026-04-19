@@ -27,9 +27,9 @@ from scipy.linalg import orthogonal_procrustes
 from datetime import datetime
 
 
-CORPUS_PATH = "././corpus"
+CORPUS_PATH = "../corpus"
 SUBCORPORA_JSON = "subcorpora.json"
-OUTPUT_DIR = "././outputs"
+OUTPUT_DIR = "../outputs"
 PCA_DIR = os.path.join(OUTPUT_DIR, "pca_data")
 MODEL_DIR = os.path.join(OUTPUT_DIR, "models")
 SHIFT_DIR = os.path.join(OUTPUT_DIR, "semantic_shift")
