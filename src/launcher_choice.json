@@ -1,4 +1,3 @@
 {
-  "mode": "open_existing",
-  "run_name": "run_20260419_070111__lemma__lc1__sg1__dim300__win5__mc5__ep50__neg5__s0p001"
+  "mode": "train_new"
 }

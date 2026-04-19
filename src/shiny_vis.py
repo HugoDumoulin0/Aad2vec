@@ -226,12 +226,25 @@ def available_labels(run_name):
 
 def load_sentences(run_name, label):
     """
-    Supporte :
-    - list[list[str]]
-    - list[dict] avec clé 'tokens'
+    Retourne une liste de dicts :
+
+    {
+        "tokens": [...],
+        "word": [...],
+        "lemma": [...],
+        "surface_text": "..."
+    }
+
+    Compatible ancien format.
     """
+
     dirs = run_dirs(run_name)
-    path = os.path.join(dirs["sentences"], f"{label}_sentences.json")
+
+    path = os.path.join(
+        dirs["sentences"],
+        f"{label}_sentences.json"
+    )
+
     if not os.path.exists(path):
         return []
 
@@ -241,17 +254,52 @@ def load_sentences(run_name, label):
     if not data:
         return []
 
-    # cas 1 : déjà une liste de listes de tokens
-    if isinstance(data, list) and isinstance(data[0], list):
-        return data
+    # ancien format
+    if isinstance(data[0], list):
 
-    # cas 2 : liste de dicts avec clé tokens
-    if isinstance(data, list) and isinstance(data[0], dict):
+        return [
+            {
+                "tokens": sent,
+                "word": sent,
+                "lemma": sent,
+                "surface_text": " ".join(sent),
+            }
+            for sent in data
+        ]
+
+    # nouveau format
+    if isinstance(data[0], dict):
+
         out = []
+
         for item in data:
+
             tokens = item.get("tokens", [])
+
+            word_tokens = item.get(
+                "word",
+                tokens
+            )
+
+            lemma_tokens = item.get(
+                "lemma",
+                tokens
+            )
+
+            surface_text = item.get(
+                "surface_text",
+                " ".join(word_tokens)
+            )
+
             if isinstance(tokens, list):
-                out.append(tokens)
+
+                out.append({
+                    "tokens": tokens,
+                    "word": word_tokens,
+                    "lemma": lemma_tokens,
+                    "surface_text": surface_text,
+                })
+
         return out
 
     return []
@@ -669,36 +717,7 @@ def extract_windows_from_characteristic_context_words(
     deduplicate=True,
     non_overlapping=True,
 ):
-    """
-    Extrait des fenêtres locales centrées sur les mots de contexte
-    les plus caractéristiques d'un cluster.
 
-    Score =
-        somme des scores des mots de contexte caractéristiques présents
-        + bonus léger pour les mots du cluster présents
-
-    Paramètres
-    ----------
-    sentences : list[list[str]]
-        Corpus tokenisé.
-    context_words_df : DataFrame
-        Sortie de characteristic_context_words_for_cluster()
-        avec colonnes: context_word, score, frequency.
-    cluster_words : list[str] | None
-        Mots du cluster cible.
-    window_size : int
-        Nombre de tokens à gauche et à droite du centre.
-    topn : int
-        Nombre max de fenêtres retournées.
-    require_cluster_word : bool
-        Si True, impose au moins un mot du cluster dans la fenêtre.
-    min_context_matches : int
-        Nombre minimum de mots de contexte caractéristiques présents.
-    deduplicate : bool
-        Déduplique les fenêtres identiques.
-    non_overlapping : bool
-        Si True, supprime les chevauchements intra-phrase.
-    """
     empty_cols = [
         "sentence_id",
         "start",
@@ -715,7 +734,7 @@ def extract_windows_from_characteristic_context_words(
     if not sentences or context_words_df is None or context_words_df.empty:
         return pd.DataFrame(columns=empty_cols)
 
-    context_words = context_words_df["context_word"].dropna().astype(str).tolist()
+    context_words = context_words_df["context_word"].astype(str).tolist()
     context_set = set(context_words)
 
     context_score_map = {
@@ -728,48 +747,76 @@ def extract_windows_from_characteristic_context_words(
     rows = []
 
     for sent_id, sent in enumerate(sentences):
+
         if not sent:
             continue
 
-        tokens = [str(t) for t in sent]
+        # toujours la représentation du modèle
+        tokens = sent["tokens"]
+
+        # toujours la représentation lisible
+        word_tokens = sent["word"]
+
+        if not tokens:
+            continue
 
         for i, tok in enumerate(tokens):
-            # on centre sur un mot de contexte caractéristique
+
             if tok not in context_set:
                 continue
 
             start = max(0, i - window_size)
             end = min(len(tokens), i + window_size + 1)
-            win_tokens = tokens[start:end]
 
-            matched_context = sorted(set([w for w in win_tokens if w in context_set]))
+            win_tokens = tokens[start:end]
+            win_words = word_tokens[start:end]
+
+            matched_context = list(
+                set(w for w in win_tokens if w in context_set)
+            )
+
             n_context = len(matched_context)
 
             if n_context < min_context_matches:
                 continue
 
-            matched_cluster = sorted(set([w for w in win_tokens if w in cluster_set]))
+            matched_cluster = list(
+                set(w for w in win_tokens if w in cluster_set)
+            )
+
             n_cluster = len(matched_cluster)
 
             if require_cluster_word and n_cluster == 0:
                 continue
 
-            # score principal = somme des scores des mots de contexte présents
-            score_context = sum(context_score_map[w] for w in matched_context)
+            score_context = sum(
+                context_score_map[w]
+                for w in matched_context
+            )
 
-            # petit bonus pour la présence de mots du cluster
             score = score_context + 0.1 * n_cluster
 
             rows.append({
                 "sentence_id": sent_id,
                 "start": start,
                 "end": end - 1,
+
+                # centre côté modèle
                 "center_word": tok,
-                "window_text": " ".join(win_tokens),
-                "matched_context_words": ", ".join(matched_context),
+
+                # affichage réel
+                "window_text": " ".join(win_words),
+
+                "matched_context_words":
+                    ", ".join(sorted(matched_context)),
+
                 "n_context_matched": n_context,
-                "matched_cluster_words": ", ".join(matched_cluster),
+
+                "matched_cluster_words":
+                    ", ".join(sorted(matched_cluster)),
+
                 "n_cluster_matched": n_cluster,
+
                 "score": round(score, 4),
             })
 
@@ -784,12 +831,18 @@ def extract_windows_from_characteristic_context_words(
     ).reset_index(drop=True)
 
     if deduplicate:
-        df = df.drop_duplicates(subset=["window_text"], keep="first").reset_index(drop=True)
+        df = df.drop_duplicates(
+            subset=["window_text"],
+            keep="first"
+        ).reset_index(drop=True)
 
     if non_overlapping:
-        df = select_non_overlapping_windows(df, topn=topn)
+        df = select_non_overlapping_windows(
+            df,
+            topn=topn
+        )
     else:
-        df = df.head(topn).reset_index(drop=True)
+        df = df.head(topn)
 
     return df
 

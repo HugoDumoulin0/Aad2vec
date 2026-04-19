@@ -192,6 +192,17 @@ def load_subcorpora_and_config(path_json):
 #############################################
 
 def tokenize(corpus_liste, lowercase=True, token_representation="word"):
+    """
+    Retourne une liste de dicts :
+
+    {
+        "tokens": [...],     # représentation utilisée pour Word2Vec
+        "word": [...],       # formes graphiques
+        "lemma": [...],      # lemmes
+        "surface_text": "..."
+    }
+    """
+
     nlp = spacy.load("fr_core_news_sm")
     corpus_sentences = []
 
@@ -199,33 +210,48 @@ def tokenize(corpus_liste, lowercase=True, token_representation="word"):
         doc = nlp(texte, disable=["ner"])
 
         for sent in doc.sents:
-            sent_tokens = []
+
+            word_tokens = []
+            lemma_tokens = []
 
             for token in sent:
+
                 if token.is_space or token.is_punct:
                     continue
 
-                if token_representation == "lemma":
-                    tok = token.lemma_
-                else:
-                    tok = token.text
+                word = str(token.text).strip()
+                lemma = str(token.lemma_).strip()
 
-                tok = str(tok).strip()
-
-                if not tok:
+                if not word:
                     continue
 
-                # sécurité spaCy
-                if tok == "-PRON-":
-                    tok = token.text
+                if not lemma:
+                    lemma = word
+
+                if lemma == "-PRON-":
+                    lemma = word
 
                 if lowercase:
-                    tok = tok.lower()
+                    word = word.lower()
+                    lemma = lemma.lower()
 
-                sent_tokens.append(tok)
+                word_tokens.append(word)
+                lemma_tokens.append(lemma)
 
-            if sent_tokens:
-                corpus_sentences.append(sent_tokens)
+            if not word_tokens:
+                continue
+
+            if token_representation == "lemma":
+                train_tokens = lemma_tokens
+            else:
+                train_tokens = word_tokens
+
+            corpus_sentences.append({
+                "tokens": train_tokens,
+                "word": word_tokens,
+                "lemma": lemma_tokens,
+                "surface_text": " ".join(word_tokens),
+            })
 
     return corpus_sentences
 
@@ -299,7 +325,6 @@ def get_words_sorted_by_frequency(model):
 def process_subcorpora(path_json):
     ensure_dirs()
 
-    config = load_pipeline_config(path_json)
     groups, training_config = load_subcorpora_and_config(path_json)
     subcorpora = build_subcorpora_from_files_dict(groups)
 
@@ -309,35 +334,44 @@ def process_subcorpora(path_json):
     sub_models_dict = {}
 
     lowercase = bool(training_config.get("lowercase", False))
-    token_representation = str(training_config.get("token_representation", "surface"))
+    token_representation = str(training_config.get("token_representation", "word"))
 
     for label, textes in subcorpora.items():
         print(f"\n=== Traitement du corpus : {label} ===")
 
         sentences = tokenize(
-                    textes,
-                    lowercase=lowercase,
-                    token_representation=token_representation
-                )
+            textes,
+            lowercase=lowercase,
+            token_representation=token_representation
+        )
+
         if not sentences:
             print("[WARN] Corpus vide après tokenisation.")
             continue
 
+        train_sentences = [s["tokens"] for s in sentences]
         label_safe = safe_label(label)
 
         save_sentences(sentences, label_safe, run_dirs["sentences"])
 
         model_path = os.path.join(run_dirs["models"], f"w2v_{label_safe}.model")
-        model = train(sentences, model_path, training_config)
+        model = train(train_sentences, model_path, training_config)
+
         sub_models_dict[label_safe] = model
 
     all_texts = []
     for textes in subcorpora.values():
         all_texts.extend(textes)
 
-    global_sentences = tokenize(all_texts, lowercase=lowercase,token_representation=token_representation)
+    global_sentences = tokenize(
+        all_texts,
+        lowercase=lowercase,
+        token_representation=token_representation
+    )
+    global_train_sentences = [s["tokens"] for s in global_sentences]
+
     global_model_path = os.path.join(run_dirs["models"], "w2v_global.model")
-    global_model = train(global_sentences, global_model_path, training_config)
+    global_model = train(global_train_sentences, global_model_path, training_config)
 
     build_semantic_shift_outputs(
         global_model=global_model,
@@ -576,7 +610,7 @@ def make_run_name(training_config):
     negative = int(training_config.get("negative", 5))
     sample = training_config.get("sample", 0.001)
     lowercase = int(bool(training_config.get("lowercase", True)))
-    token_representation = str(training_config.get("token_representation", "surface"))
+    token_representation = str(training_config.get("token_representation", "word"))
 
     token_tag = "lemma" if token_representation == "lemma" else "word"
 
