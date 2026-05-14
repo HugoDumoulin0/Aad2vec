@@ -23,9 +23,12 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import numpy as np
 
-from sklearn.decomposition import PCA
+from sklearn.decomposition import TruncatedSVD, PCA
 from sklearn.cluster import AgglomerativeClustering
+from sklearn.metrics.pairwise import cosine_similarity
+
 from scipy.linalg import orthogonal_procrustes
+from collections import Counter, defaultdict
 
 import hashlib
 
@@ -38,6 +41,7 @@ RUNS_DIR = os.path.join(OUTPUT_DIR, "runs")
 # ============================================================
 PCA_CACHE = {}
 GLOBAL_PCA_CACHE = {}
+COOC_CACHE = {}
 
 
 def make_sub_pca_cache_key(run_name, label, allowed_pos, top_n, n_clusters, cluster_on_pca=True):
@@ -381,6 +385,38 @@ def cluster_centroid(cluster_words, model):
         return None
     return np.mean(vecs, axis=0)
 
+#helpers
+
+COMPLETE_CORPUS_LABEL = "Corpus complet"
+
+
+def corpus_choices(run_name):
+    labels = available_labels(run_name)
+    if not labels:
+        return ["Aucune PCA disponible"]
+    return [COMPLETE_CORPUS_LABEL] + labels
+
+
+def load_model_for_corpus(run_name, label):
+    if label == COMPLETE_CORPUS_LABEL:
+        return load_global_model(run_name)
+    return load_model(run_name, label)
+
+
+def load_sentences_for_corpus(run_name, label):
+    if label == COMPLETE_CORPUS_LABEL:
+        sentences = []
+        for sub_label in available_labels(run_name):
+            sentences.extend(load_sentences(run_name, sub_label))
+        return sentences
+
+    return load_sentences(run_name, label)
+
+
+def pca_cache_label(label):
+    if label == COMPLETE_CORPUS_LABEL:
+        return "GLOBAL"
+    return label
 
 
 # ============================================================
@@ -484,7 +520,8 @@ def extract_cluster_windows(
 
         # normalisation légère : on garde les tokens tels quels,
         # puisqu'ils doivent matcher le vocabulaire appris
-        tokens = [str(t) for t in sent]
+        tokens = [str(t) for t in sentence_tokens(sent)]
+
 
         for i, tok in enumerate(tokens):
             if tok not in cluster_set:
@@ -666,7 +703,8 @@ def extract_sentences_from_characteristic_context_words(
         if not sent:
             continue
 
-        tokens = [str(t) for t in sent]
+        tokens = [str(t) for t in sentence_tokens(sent)]
+
 
         matched_context = sorted(set([t for t in tokens if t in context_set]))
         n_context = len(matched_context)
@@ -1412,6 +1450,260 @@ def dataframe_to_simple_html_table(df):
         style="width: 100%; border-collapse: collapse; font-size: 0.95em;"
     )
 
+# ============================================================
+# Cooccurrences
+# ============================================================
+import scipy.sparse as sp
+from collections import defaultdict
+from sklearn.decomposition import TruncatedSVD
+
+
+def sentence_tokens(sent):
+    if isinstance(sent, dict):
+        return sent.get("tokens", [])
+    return sent
+
+
+
+def build_cooc_matrix(sentences, vocab, window_size=4):
+    word_to_idx = {w: i for i, w in enumerate(vocab)}
+    rows, cols, data = [], [], []
+    counts = defaultdict(float)
+
+    for sent in sentences:
+        toks = [t for t in sentence_tokens(sent) if t in word_to_idx]
+
+        for i, w in enumerate(toks):
+            wi = word_to_idx[w]
+
+            start = max(0, i - window_size)
+            end = min(len(toks), i + window_size + 1)
+
+            for j in range(start, end):
+                if i == j:
+                    continue
+                cj = word_to_idx[toks[j]]
+                counts[(wi, cj)] += 1.0
+
+    for (r, c), v in counts.items():
+        rows.append(r)
+        cols.append(c)
+        data.append(v)
+
+    M = sp.csr_matrix(
+        (data, (rows, cols)),
+        shape=(len(vocab), len(vocab)),
+        dtype=np.float32
+    )
+       
+    return M
+
+
+
+def compute_global_cooc_pca(run_name, allowed_words=None, n_components=100, window_size=4):
+    labels = available_labels(run_name)
+
+    all_sentences = []
+    for label in labels:
+        s = load_sentences(run_name, label)
+        if s:
+            all_sentences.extend(s)
+
+    if not all_sentences:
+        return pd.DataFrame(), {}, None, None, None
+
+    if allowed_words is not None:
+        vocab = sorted(list(set(allowed_words)))
+    else:
+        # construire le vocab depuis les tokens des phrases
+        all_tokens = []
+        for sent in all_sentences:
+            tokens = sent["tokens"] if isinstance(sent, dict) else sent
+            all_tokens.extend(tokens)
+        counts = Counter(all_tokens)
+        vocab = [w for w, _ in counts.most_common(1000)]  # ou un paramètre top_n
+
+    M = build_cooc_matrix(
+        all_sentences,
+        vocab=vocab,
+        window_size=window_size
+    )
+
+    svd = TruncatedSVD(n_components=min(n_components, len(vocab)-1), random_state=0)
+    X = svd.fit_transform(M)
+
+    X = normalize_rows(X)
+
+    pca = PCA(n_components=2, random_state=0)
+    XY = pca.fit_transform(X)
+
+    df = pd.DataFrame({
+        "word": vocab,
+        "x": XY[:, 0],
+        "y": XY[:, 1],
+    })
+
+    meta = {
+        "explained_variance_ratio": pca.explained_variance_ratio_.tolist(),
+        "n_words": len(vocab),
+    }
+
+    global_vectors = dict(zip(vocab, X))
+
+    return df, meta, pca, global_vectors, svd
+
+
+def project_word_across_subcorpora_cooc(
+    run_name,
+    labels,
+    allowed_words,
+    global_vectors,
+    pca,
+    svd,
+    window_size=4
+):
+    rows = []
+
+    vocab = sorted(list(global_vectors.keys()))
+    X_global = np.vstack([global_vectors[w] for w in vocab])
+
+    for label in labels:
+        sentences = load_sentences(run_name, label)
+
+        if not sentences:
+            continue
+
+        M_sub = build_cooc_matrix(
+            sentences,
+            vocab=vocab,
+            window_size=window_size
+        )
+
+        if M_sub.shape[0] < 2:
+            continue
+
+        try:
+            X_sub = svd.transform(M_sub)
+        except Exception:
+            continue
+
+        X_sub = normalize_rows(X_sub)
+
+        XY = pca.transform(X_sub)
+
+        cos_sims = np.sum(X_sub * X_global, axis=1)
+        cos_dists = 1.0 - cos_sims
+
+        for i, w in enumerate(vocab):
+            rows.append({
+                "subcorpus": label,
+                "word": w,
+                "x": XY[i, 0],
+                "y": XY[i, 1],
+                "cosine_similarity_to_global": float(cos_sims[i]),
+                "cosine_distance_to_global": float(cos_dists[i]),
+            })
+
+    return pd.DataFrame(rows)
+
+def compute_cooc_pca(
+    sentences,
+    allowed_pos=("NOUN",),
+    top_n=500,
+    window_size=5,
+    n_clusters=8,
+    cluster_on_pca=True,
+):
+    if not sentences:
+        return pd.DataFrame(columns=["word", "x", "y", "cluster"]), {}
+
+    tokens = []
+    allowed_pos = set(allowed_pos) if allowed_pos else None
+
+    for sent in sentences:
+        toks = sentence_tokens(sent)
+        for tok in toks:
+            if allowed_pos and get_word_pos(tok) not in allowed_pos:
+                continue
+            tokens.append(tok)
+
+    counts = Counter(tokens)
+    vocab = [w for w, _ in counts.most_common(int(top_n))]
+
+    if len(vocab) < 5:
+        return pd.DataFrame(columns=["word", "x", "y", "cluster"]), {}
+
+    vocab_index = {w: i for i, w in enumerate(vocab)}
+    n = len(vocab)
+
+    M = np.zeros((n, n), dtype=np.float32)
+
+    for sent in sentences:
+        toks = sentence_tokens(sent)
+        filtered = [tok for tok in toks if tok in vocab_index]
+
+        for i, center in enumerate(filtered):
+            ci = vocab_index[center]
+            start = max(0, i - window_size)
+            end = min(len(filtered), i + window_size + 1)
+
+            for j in range(start, end):
+                if i == j:
+                    continue
+                cj = vocab_index[filtered[j]]
+                M[ci, cj] += 1.0
+
+    if M.sum() == 0:
+        return pd.DataFrame(columns=["word", "x", "y", "cluster"]), {}
+
+    total = M.sum()
+    row_sum = M.sum(axis=1, keepdims=True)
+    col_sum = M.sum(axis=0, keepdims=True)
+
+    expected = row_sum @ col_sum / total
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ppmi = np.log((M * total) / expected)
+
+    ppmi[np.isinf(ppmi)] = 0.0
+    ppmi[np.isnan(ppmi)] = 0.0
+    ppmi[ppmi < 0] = 0.0
+
+    dim = min(100, max(2, len(vocab) - 1))
+    svd = TruncatedSVD(n_components=dim, random_state=42)
+    X = svd.fit_transform(ppmi)
+    X = normalize_rows(X)
+
+    pca = PCA(n_components=2, random_state=42)
+    XY = pca.fit_transform(X)
+
+    n_clusters = max(2, min(int(n_clusters), len(vocab) - 1))
+    X_cluster = XY if cluster_on_pca else X
+
+    clustering = AgglomerativeClustering(
+        n_clusters=n_clusters,
+        metric="euclidean",
+        linkage="ward"
+    )
+
+    cluster_labels = clustering.fit_predict(X_cluster)
+
+    df = pd.DataFrame({
+        "word": vocab,
+        "x": XY[:, 0],
+        "y": XY[:, 1],
+        "cluster": cluster_labels,
+    })
+
+    meta = {
+        "explained_variance_ratio": pca.explained_variance_ratio_.tolist(),
+        "n_words": len(vocab),
+        "n_clusters": n_clusters,
+    }
+
+    return df, meta
+
+
 
 # ============================================================
 # UI
@@ -1420,7 +1712,7 @@ def dataframe_to_simple_html_table(df):
 runs0 = available_runs()
 env_default_run = os.environ.get("DEFAULT_RUN_NAME")
 default_run = env_default_run if env_default_run in runs0 else (runs0[0] if runs0 else None)
-labels0 = available_labels(default_run) if default_run else []
+labels0 = corpus_choices(default_run) if default_run else []
 
 app_ui = ui.page_fluid(
     ui.h2("Visualisation sémantique"),
@@ -1675,8 +1967,164 @@ app_ui = ui.page_fluid(
                 max=500
             ),
             ui.output_data_frame("word_spread_table"),
-            )
+            ),
+        
+    ui.nav_panel("Cooccurrences",
+
+    ui.h4("Projection par cooccurrences"),
+    
+    ui.row(
+            ui.column(
+                4,
+                ui.input_select(
+                    "corpus_label_cooc",
+                    "Choisir un corpus",
+                    choices=labels0 if labels0 else ["Aucun corpus disponible"],
+                    selected=COMPLETE_CORPUS_LABEL if labels0 else "Aucun corpus disponible",
+
+                ),
+            ),
+        ),
+
+    ui.row(
+        ui.column(
+            3,
+            ui.input_numeric(
+                "cooc_window",
+                "Fenêtre ± tokens",
+                value=5,
+                min=1,
+                max=20
+            ),
+        ),
+
+
+
+        ui.column(
+            3,
+            ui.input_numeric(
+                "cooc_top_words",
+                "Top mots",
+                value=300,
+                min=50,
+                max=5000
+            ),
+        ),
+        ui.column(
+            4,
+            ui.input_selectize(
+                "cooc_pos_filter",
+                "POS affichés",
+                choices=POS_OPTIONS,
+                selected=["NOUN"],
+                multiple=True
+            ),
+        ),
+    ),
+
+    ui.hr(),
+    
+    ui.column(
+    3,
+    ui.input_numeric(
+        "cooc_n_clusters",
+        "Nombre de clusters",
+        value=8,
+        min=2,
+        max=30
+    ),
+),
+    
+    
+
+    ui.h4("ACP cooccurrences"),
+    ui.output_plot("cooc_plot", height="800px"),
+    
+    ui.h4("Affichage ACP cooccurrences"),
+    
+    ui.input_slider(
+        "top_contrib_pct_cooc",
+        "Pourcentage de points affichés (par contribution)",
+        min=5,
+        max=100,
+        value=100,
+        step=5
+    ),
+    
+    ui.input_checkbox(
+        "scale_by_contrib_cooc",
+        "Taille proportionnelle à la contribution",
+        value=False
+    ),
+    
+    ui.input_select(
+        "cluster_id_cooc",
+        "Choisir un cluster",
+        choices=[""],
+        selected="",
+    ),
+
+    ui.h4("Coordonnées"),
+    ui.output_data_frame("cooc_table"),
+    
+    ui.h4("Mots du cluster cooccurrences"),
+    ui.output_data_frame("cooc_cluster_words_table"),
+
+),
+        
+        
+        
+        ui.nav_panel(
+    "Évolution (cooccurrences)",
+    
+    ui.row(
+    ui.column(
+        3,
+        ui.input_checkbox(
+            "show_global_background_cooc",
+            "Afficher le fond global",
+            value=True
         )
+    ),
+    ui.column(
+        3,
+        ui.input_checkbox(
+            "show_word_labels_cooc",
+            "Afficher les labels sous-corpus",
+            value=True
+        )
+    ),
+    ui.column(
+        3,
+        ui.input_checkbox(
+            "show_global_labels_cooc",
+            "Afficher les labels du fond global",
+            value=False
+        )
+    ),
+),
+
+
+    ui.input_numeric(
+        "cooc_window_size",
+        "Fenêtre cooccurrences",
+        value=4,
+        min=1,
+        max=10
+    ),
+
+    ui.output_ui("word_selector_ui_cooc"),
+
+    ui.h4("Trajectoire cooccurrences"),
+    ui.output_plot("word_shift_plot_cooc", height="850px"),
+
+    ui.h4("Distances au global"),
+    ui.output_data_frame("word_shift_table_cooc"),
+
+    ui.h4("Mots les plus dispersés"),
+    ui.output_data_frame("word_spread_table_cooc"),
+)
+    )
     )
 
 
@@ -1723,7 +2171,8 @@ def server(input, output, session):
         if not label or label == "Aucune PCA disponible":
             return pd.DataFrame(columns=["word", "x", "y", "cluster"]), {}
 
-        model = load_model(run_name, label)
+        model = load_model_for_corpus(run_name, label)
+        label_key = pca_cache_label(label)
 
         allowed_pos = tuple(input.pos_filter_sub()) if input.pos_filter_sub() is not None else tuple()
         top_n = int(input.top_words_sub())
@@ -1732,7 +2181,7 @@ def server(input, output, session):
         df, meta = compute_dynamic_pca_and_clusters(
             run_name=run_name,
             model=model,
-            label=label,
+            label=label_key,
             allowed_pos=allowed_pos,
             top_n=top_n,
             n_clusters=n_clusters,
@@ -1770,14 +2219,15 @@ def server(input, output, session):
     def _update_labels_for_run():
         run_name = input.run_name()
     
-        labels = available_labels(run_name)
+        choices = corpus_choices(run_name)
     
-        if labels:
+        if choices and choices != ["Aucune PCA disponible"]:
             current = input.corpus_label()
-            selected = current if current in labels else labels[0]
+            selected = current if current in choices else COMPLETE_CORPUS_LABEL
+    
             ui.update_select(
                 "corpus_label",
-                choices=labels,
+                choices=choices,
                 selected=selected,
                 session=session,
             )
@@ -1788,6 +2238,7 @@ def server(input, output, session):
                 selected="Aucune PCA disponible",
                 session=session,
             )
+
 
     # ---- clusters disponibles pour le corpus sélectionné
     @reactive.Effect
@@ -1836,8 +2287,8 @@ def server(input, output, session):
             return "Aucune PCA disponible."
 
         df, meta = subcorpus_pca_data()
-        model = load_model(run_name, label)
-        sentences = load_sentences(run_name, label)
+        model = load_model_for_corpus(run_name, label)
+        sentences = load_sentences_for_corpus(run_name, label)
 
 
         lines = [f"Corpus : {label}"]
@@ -2065,7 +2516,8 @@ def server(input, output, session):
             return render.DataGrid(pd.DataFrame(columns=["word", "similarity"]))
 
         run_name = input.run_name()
-        model = load_model(run_name, label)
+        model = load_model_for_corpus(run_name, label)
+        sentences = load_sentences_for_corpus(run_name, label)
         if model is None:
             return render.DataGrid(pd.DataFrame(columns=["word", "similarity"]))
 
@@ -2159,7 +2611,9 @@ def server(input, output, session):
             ]))
     
         run_name = input.run_name()
-        model = load_model(run_name, label)
+        
+        model = load_model_for_corpus(run_name, label)
+        sentences = load_sentences_for_corpus(run_name, label)
     
         if model is None:
             return render.DataGrid(pd.DataFrame(columns=[
@@ -2204,8 +2658,8 @@ def server(input, output, session):
             ]))
     
         run_name = input.run_name()
-        model = load_model(run_name, label)
-        sentences = load_sentences(run_name, label)
+        model = load_model_for_corpus(run_name, label)
+        sentences = load_sentences_for_corpus(run_name, label)
     
         if model is None or not sentences:
             return render.DataGrid(pd.DataFrame(columns=[
@@ -2269,8 +2723,8 @@ def server(input, output, session):
             ]))
     
         run_name = input.run_name()
-        model = load_model(run_name, label)
-        sentences = load_sentences(run_name, label)
+        model = load_model_for_corpus(run_name, label)
+        sentences = load_sentences_for_corpus(run_name, label)
     
         if model is None or not sentences:
             return render.DataGrid(pd.DataFrame(columns=[
@@ -2571,6 +3025,424 @@ def server(input, output, session):
     
         return ui.row(*cards)
     
+    # ---- cooccurrences calc
+    @reactive.calc
+    def cooc_pca_data():
+        run_name = input.run_name()
+        label = input.corpus_label_cooc()
+    
+        if (
+            not run_name
+            or run_name == "Aucun run disponible"
+            or not label
+            or label == "Aucun corpus disponible"
+        ):
+            return pd.DataFrame(columns=["word", "x", "y", "cluster"]), {}
+    
+        if label == "Corpus complet":
+            sentences = []
+            for sub_label in available_labels(run_name):
+                sentences.extend(load_sentences(run_name, sub_label))
+        else:
+            sentences = load_sentences(run_name, label)
+    
+        key = (
+            run_name,
+            label,
+            int(input.cooc_window()),
+            int(input.cooc_top_words()),
+            int(input.cooc_n_clusters()),
+            tuple(input.cooc_pos_filter())
+        )
+    
+        if key in COOC_CACHE:
+            return COOC_CACHE[key]
+    
+        df, meta = compute_cooc_pca(
+            sentences=sentences,
+            allowed_pos=tuple(input.cooc_pos_filter()),
+            top_n=int(input.cooc_top_words()),
+            window_size=int(input.cooc_window()),
+            n_clusters=int(input.cooc_n_clusters()),
+            cluster_on_pca=True,
+        )
+    
+        COOC_CACHE[key] = (df, meta)
+        return df, meta
+
+    
+    @reactive.Effect
+    def _update_cooc_labels_for_run():
+        run_name = input.run_name()
+        labels = available_labels(run_name)
+    
+        if labels:
+            choices = ["Corpus complet"] + labels
+            current = input.corpus_label_cooc()
+            selected = current if current in choices else "Corpus complet"
+    
+            ui.update_select(
+                "corpus_label_cooc",
+                choices=choices,
+                selected=selected,
+                session=session,
+            )
+        else:
+            ui.update_select(
+                "corpus_label_cooc",
+                choices=["Aucun corpus disponible"],
+                selected="Aucun corpus disponible",
+                session=session,
+            )
+    
+    @reactive.Effect
+    def _update_cooc_cluster_choices():
+        df, _ = cooc_pca_data()
+    
+        if df.empty or "cluster" not in df.columns:
+            ui.update_select(
+                "cluster_id_cooc",
+                choices=[""],
+                selected="",
+                session=session,
+            )
+            return
+    
+        cluster_ids = sorted(df["cluster"].dropna().astype(int).unique().tolist())
+        choices = [str(c) for c in cluster_ids]
+    
+        current = input.cluster_id_cooc()
+        selected = current if current in choices else choices[0]
+    
+        ui.update_select(
+            "cluster_id_cooc",
+            choices=choices,
+            selected=selected,
+            session=session,
+        )
+    
+    # ---- cooccurrences plot
+    @output
+    @render.plot
+    def cooc_plot():
+        df, meta = cooc_pca_data()
+        selected_cluster = input.cluster_id_cooc()
+    
+        fig, ax = plt.subplots(figsize=(10, 10))
+    
+        if df.empty:
+            ax.set_title("Aucune donnée cooccurrence")
+            return fig
+    
+        df = add_pca_contributions(df, meta)
+        df = filter_top_contributors(df, pct=int(input.top_contrib_pct_cooc()))
+        df = df.copy()
+    
+        if bool(input.scale_by_contrib_cooc()):
+            df["point_size"] = rescale_series(df["contrib_total"], min_size=8, max_size=40)
+            df["label_size"] = rescale_series(df["contrib_total"], min_size=7, max_size=20)
+        else:
+            df["point_size"] = 15.0
+            df["label_size"] = 6.0
+    
+        evr = meta.get("explained_variance_ratio", [])
+        if len(evr) >= 2:
+            ax.set_xlabel(f"Axe 1 ({evr[0] * 100:.1f} %)")
+            ax.set_ylabel(f"Axe 2 ({evr[1] * 100:.1f} %)")
+        else:
+            ax.set_xlabel("Axe 1")
+            ax.set_ylabel("Axe 2")
+    
+        cluster_ids = sorted(df["cluster"].dropna().astype(int).unique().tolist())
+        colors = get_cluster_colors(len(cluster_ids))
+    
+        for i, cid in enumerate(cluster_ids):
+            sub = df[df["cluster"] == cid]
+            is_selected = selected_cluster != "" and int(selected_cluster) == cid
+    
+            ax.scatter(
+                sub["x"],
+                sub["y"],
+                s=sub["point_size"] * (1.35 if is_selected else 1.0),
+                color=colors[i],
+                alpha=1.0 if is_selected else 0.85,
+                edgecolor="black" if is_selected else None,
+                linewidth=0.5 if is_selected else 0.0,
+                label=f"Cluster {cid}",
+            )
+    
+        if selected_cluster != "":
+            selected_cluster_int = int(selected_cluster)
+    
+            df_other = df[df["cluster"] != selected_cluster_int]
+            df_sel = df[df["cluster"] == selected_cluster_int]
+    
+            for _, row in df_other.iterrows():
+                ax.annotate(
+                    row["word"],
+                    (row["x"], row["y"]),
+                    xytext=(2, 2),
+                    textcoords="offset points",
+                    fontsize=float(row["label_size"]) * 0.9,
+                    alpha=0.55,
+                )
+    
+            for _, row in df_sel.iterrows():
+                ax.annotate(
+                    row["word"],
+                    (row["x"], row["y"]),
+                    xytext=(3, 3),
+                    textcoords="offset points",
+                    fontsize=float(row["label_size"]) * 0.9,
+                    fontweight="bold",
+                )
+        else:
+            for _, row in df.iterrows():
+                ax.annotate(
+                    row["word"],
+                    (row["x"], row["y"]),
+                    xytext=(2, 2),
+                    textcoords="offset points",
+                    fontsize=float(row["label_size"]),
+                    alpha=0.8,
+                )
+    
+        ax.legend(
+            title="Clusters",
+            fontsize=8,
+            title_fontsize=9,
+            loc="best",
+            frameon=True,
+        )
+    
+        ax.set_title("Projection ACP des cooccurrences")
+        ax.tick_params(axis="both", labelsize=8)
+    
+        return fig
+
+    
+    # ---- cooccurrences table
+    @output
+    @render.data_frame
+    def cooc_table():
+        df, meta = cooc_pca_data()
+    
+        df = add_pca_contributions(df, meta)
+        df = filter_top_contributors(df, pct=int(input.top_contrib_pct_cooc()))
+    
+        cols = [
+            c for c in
+            ["word", "x", "y", "cluster", "contrib_dim1", "contrib_dim2", "contrib_total"]
+            if c in df.columns
+        ]
+    
+        return render.DataGrid(df[cols])
+
+    # ---- cooccurrences cluster words
+    @output
+    @render.data_frame
+    def cooc_cluster_words_table():
+        df, _ = cooc_pca_data()
+        cluster_id = input.cluster_id_cooc()
+    
+        if df.empty or cluster_id == "":
+            return render.DataGrid(pd.DataFrame(columns=["word", "x", "y", "cluster"]))
+    
+        sub = df[df["cluster"] == int(cluster_id)].copy()
+        sub = sub.sort_values("word").reset_index(drop=True)
+    
+        return render.DataGrid(sub)
+
+    
+    # ---- cooccurrences trajectory 
+    @output
+    @render.ui
+    def word_selector_ui_cooc():
+        df_global, _, df_positions_all = global_shift_data_cooc()
+    
+        if df_global.empty:
+            return ui.p("Aucune donnée cooccurrence disponible.")
+    
+        available = set(df_positions_all["word"].dropna().astype(str).tolist())
+        words = [w for w in df_global["word"].dropna().astype(str).tolist() if w in available]
+    
+        return ui.input_selectize(
+            "tracked_word_cooc",
+            "Choisir un mot",
+            choices=words,
+            selected=words[0] if words else None,
+            multiple=False
+        )
+        
+    @output
+    @render.plot
+    def word_shift_plot_cooc():
+        df_global, meta, df_positions_all = global_shift_data_cooc()
+    
+        fig, ax = plt.subplots(figsize=(10, 10))
+    
+        if df_global.empty:
+            ax.set_title("Aucune ACP cooccurrence disponible")
+            return fig
+    
+        word = input.tracked_word_cooc()
+        if not word:
+            ax.set_title("Choisir un mot")
+            return fig
+    
+        sub = df_positions_all[df_positions_all["word"] == word].copy()
+    
+        if sub.empty:
+            ax.set_title(f"Aucune position disponible pour '{word}'")
+            return fig
+    
+        # fond global
+        if bool(input.show_global_background_cooc()) and not df_global.empty:
+            ax.scatter(
+                df_global["x"],
+                df_global["y"],
+                s=8,
+                alpha=0.12,
+                color="lightgray"
+            )
+        
+        if bool(input.show_word_labels_cooc()):
+            for _, row in sub.iterrows():
+                ax.annotate(
+                    row["subcorpus"],
+                    (row["x"], row["y"]),
+                    xytext=(4, 4),
+                    textcoords="offset points",
+                    fontsize=7,
+                    fontweight="bold"
+                )
+
+
+    
+        sub = sub.sort_values("subcorpus").reset_index(drop=True)
+    
+        colors = get_cluster_colors(len(sub))
+    
+        ax.scatter(
+            sub["x"],
+            sub["y"],
+            s=80,
+            color=colors,
+            edgecolor="black",
+            linewidth=0.6
+        )
+    
+        ax.plot(
+            sub["x"],
+            sub["y"],
+            color="black",
+            alpha=0.5,
+            linewidth=1.0
+        )
+        
+        global_word = df_global[df_global["word"] == word]
+        if not global_word.empty:
+            gx = global_word.iloc[0]["x"]
+            gy = global_word.iloc[0]["y"]
+    
+            ax.scatter([gx], [gy], s=120, marker="X", color="red")
+            ax.annotate(
+                f"{word} (global)",
+                (gx, gy),
+                xytext=(5, 5),
+                textcoords="offset points",
+                fontsize=8,
+                fontweight="bold"
+            )
+    
+        evr = meta.get("explained_variance_ratio", [])
+        if len(evr) >= 2:
+            ax.set_xlabel(f"Axe 1 ({evr[0]*100:.1f} %)")
+            ax.set_ylabel(f"Axe 2 ({evr[1]*100:.1f} %)")
+        else:
+            ax.set_xlabel("Axe 1")
+            ax.set_ylabel("Axe 2")
+    
+        ax.set_title(f"Évolution cooccurrence de '{word}' entre sous-corpus")
+    
+        return fig
+    
+    @output
+    @render.data_frame
+    def word_shift_table_cooc():
+        df_global, _, df_positions_all = global_shift_data_cooc()
+    
+        word = input.tracked_word_cooc()
+    
+        if not word:
+            return render.DataGrid(pd.DataFrame(columns=[
+                "subcorpus", "word", "x", "y",
+                "cosine_similarity_to_global",
+                "cosine_distance_to_global"
+            ]))
+    
+        sub = (
+            df_positions_all[df_positions_all["word"] == word]
+            .sort_values("cosine_distance_to_global", ascending=False)
+            .reset_index(drop=True)
+        )
+    
+        return render.DataGrid(sub)
+    
+    @output
+    @render.data_frame
+    def word_spread_table_cooc():
+        _, _, df_positions_all = global_shift_data_cooc()
+    
+        df_spread = compute_word_spread_table(df_positions_all)
+    
+        if df_spread.empty:
+            return render.DataGrid(pd.DataFrame())
+    
+        top_n = int(input.top_spread_words())
+    
+        df_spread = df_spread.head(top_n).copy()
+    
+        df_spread["max_pairwise_dist_2d"] = df_spread["max_pairwise_dist_2d"].round(4)
+        df_spread["mean_pairwise_dist_2d"] = df_spread["mean_pairwise_dist_2d"].round(4)
+    
+        return render.DataGrid(df_spread)
+    
+    @reactive.calc
+    def global_shift_data_cooc():
+        run_name = input.run_name()
+    
+        global_model = load_global_model(run_name)
+        allowed_pos = tuple(input.pos_filter_global()) if input.pos_filter_global() else tuple()
+        top_n = int(input.top_words_global())
+    
+        allowed_words = select_words_by_pos_then_topn(global_model, allowed_pos, top_n) if global_model else None
+    
+        if not allowed_words:
+            return pd.DataFrame(), {}, pd.DataFrame()
+    
+        df_cooc_global, meta, pca, global_vectors, svd = compute_global_cooc_pca(
+            run_name=run_name,
+            allowed_words=allowed_words,
+            window_size=int(input.cooc_window_size())
+        )
+    
+        if df_cooc_global.empty:
+            return df_cooc_global, meta, pd.DataFrame()
+    
+        labels = available_labels(run_name)
+    
+        df_positions_all = project_word_across_subcorpora_cooc(
+            run_name=run_name,
+            labels=labels,
+            allowed_words=allowed_words,
+            global_vectors=global_vectors,
+            pca=pca,
+            svd=svd,
+            window_size=int(input.cooc_window_size())
+        )
+    
+        return df_cooc_global, meta, df_positions_all
     
     # ---- info cache
     @output

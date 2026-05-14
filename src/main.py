@@ -25,6 +25,7 @@ from sklearn.cluster import AgglomerativeClustering
 from scipy.linalg import orthogonal_procrustes
 
 from datetime import datetime
+from collections import defaultdict
 
 
 CORPUS_PATH = "../corpus"
@@ -107,6 +108,12 @@ def normalize_rows(X):
     norms = np.linalg.norm(X, axis=1, keepdims=True)
     norms[norms == 0] = 1.0
     return X / norms
+
+def get_vector(model, word):
+    if model["type"] == "cooc":
+        return model["embeddings"][model["index"][word]]
+    else:
+        return model.wv[word]
 
 
 #############################################
@@ -255,6 +262,49 @@ def tokenize(corpus_liste, lowercase=True, token_representation="word"):
 
     return corpus_sentences
 
+#############################################
+# cooccurrences
+#############################################
+
+def build_cooccurrence(sentences, window_size=2):
+    """
+    sentences: list[list[str]]
+        ex: [["le", "chat", "dort"], ["le", "chien"]]
+
+    return:
+        cooc: dict[word][word] = weight
+        vocab: set of words
+    """
+
+    cooc = defaultdict(lambda: defaultdict(float))
+    vocab = set()
+
+    for sent in sentences:
+        n = len(sent)
+
+        for i, w in enumerate(sent):
+            vocab.add(w)
+
+            # fenêtre locale autour du mot
+            left = max(0, i - window_size)
+            right = min(n, i + window_size + 1)
+
+            for j in range(left, right):
+                if i == j:
+                    continue
+
+                w2 = sent[j]
+                vocab.add(w2)
+
+                # pondération simple (option stable)
+                dist = abs(i - j)
+                weight = 1.0 / dist
+
+                cooc[w][w2] += weight
+
+    vocab = sorted(vocab)
+    return cooc, vocab
+
 
 #############################################
 # Entraînement Word2Vec
@@ -327,6 +377,8 @@ def process_subcorpora(path_json):
 
     groups, training_config = load_subcorpora_and_config(path_json)
     subcorpora = build_subcorpora_from_files_dict(groups)
+    
+    model_type = training_config.get("model_type", "w2v")
 
     run_name = make_run_name(training_config)
     run_dirs = make_run_dirs(run_name)
@@ -355,7 +407,34 @@ def process_subcorpora(path_json):
         save_sentences(sentences, label_safe, run_dirs["sentences"])
 
         model_path = os.path.join(run_dirs["models"], f"w2v_{label_safe}.model")
-        model = train(train_sentences, model_path, training_config)
+        if model_type == "w2v":
+
+            model = train(train_sentences, model_path, training_config)
+
+        elif model_type == "cooc":
+        
+            cooc, vocab = build_cooccurrence(
+                train_sentences,
+                window_size=int(training_config.get("window", 2))
+            )
+        
+            X, idx = cooc_to_matrix(cooc, vocab)
+        
+            X_emb, pca = cooc_embeddings(
+                X,
+                dim=int(training_config.get("vector_size", 300))
+            )
+        
+            model = {
+                "type": "cooc",
+                "vocab": vocab,
+                "index": idx,
+                "embeddings": X_emb,
+                "pca": pca
+            }
+
+        else:
+            raise ValueError(f"model_type inconnu: {model_type}")
 
         sub_models_dict[label_safe] = model
 
@@ -371,7 +450,34 @@ def process_subcorpora(path_json):
     global_train_sentences = [s["tokens"] for s in global_sentences]
 
     global_model_path = os.path.join(run_dirs["models"], "w2v_global.model")
-    global_model = train(global_train_sentences, global_model_path, training_config)
+    if model_type == "w2v":
+
+        global_model = train(global_train_sentences, global_model_path, training_config)
+
+    elif model_type == "cooc":
+    
+        cooc, vocab = build_cooccurrence(
+            global_train_sentences,
+            window_size=int(training_config.get("window", 2))
+        )
+    
+        X, idx = cooc_to_matrix(cooc, vocab)
+    
+        X_emb, pca = cooc_embeddings(
+            X,
+            dim=int(training_config.get("vector_size", 300))
+        )
+    
+        global_model = {
+            "type": "cooc",
+            "vocab": vocab,
+            "index": idx,
+            "embeddings": X_emb,
+            "pca": pca
+        }
+
+    else:
+        raise ValueError(f"model_type inconnu: {model_type}")
 
     build_semantic_shift_outputs(
         global_model=global_model,
@@ -416,7 +522,7 @@ def align_submodel_to_global(global_model, sub_model, anchor_topn=5000, min_anch
         )
 
     X_sub = np.vstack([sub_model.wv[w] for w in common])
-    X_glob = np.vstack([global_model.wv[w] for w in common])
+    X_glob = np.vstack([get_vector(global_model, w) for w in common])
 
     X_sub = normalize_rows(X_sub)
     X_glob = normalize_rows(X_glob)
@@ -439,8 +545,8 @@ def build_semantic_shift_outputs(global_model, sub_models_dict, shift_dir, top_w
     os.makedirs(shift_dir, exist_ok=True)
 
     # vocabulaire global de fond
-    global_words = global_model.wv.index_to_key[:top_words]
-    X_global = np.vstack([global_model.wv[w] for w in global_words])
+    global_words = global_model["vocab"][:top_words]
+    X_global = np.vstack([get_vector(global_model, w) for w in global_words])
     X_global = normalize_rows(X_global)
 
     pca = PCA(n_components=2)
@@ -471,7 +577,7 @@ def build_semantic_shift_outputs(global_model, sub_models_dict, shift_dir, top_w
             v_sub = normalize_rows(v_sub)
             v_sub_aligned = v_sub @ R
 
-            v_global = global_model.wv[w].reshape(1, -1)
+            v_global = get_vector(global_model, w).reshape(1, -1)
             v_global = normalize_rows(v_global)
 
             xy = pca.transform(v_sub_aligned)[0]

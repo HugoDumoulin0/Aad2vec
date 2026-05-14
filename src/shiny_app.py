@@ -217,6 +217,43 @@ app_ui = ui.page_fluid(
         )
     ),
 ),
+    
+    ui.hr(),
+    
+    ui.h3("Paramètres Cooccurrence"),
+    
+    ui.row(
+        ui.column(
+            3,
+            ui.input_numeric(
+                "cooc_window",
+                "Fenêtre de cooccurrence",
+                value=2,
+                min=1,
+                max=20
+            )
+        ),
+        ui.column(
+            3,
+            ui.input_select(
+                "cooc_weighting",
+                "Pondération",
+                choices={
+                    "raw": "Comptage brut",
+                    "ppmi": "PPMI"
+                },
+                selected="raw"
+            )
+        ),
+        ui.column(
+            3,
+            ui.input_checkbox(
+                "cooc_symmetric",
+                "Fenêtre symétrique",
+                value=True
+            )
+        )
+    ),
 
     ui.hr(),
     
@@ -345,6 +382,12 @@ def server(input, output, session):
                 "lowercase": bool(input.lowercase()),
                 "token_representation": str(input.token_representation()),
             }
+            ,
+            "cooccurrence_config": {
+        "window": int(input.cooc_window()),
+        "weighting": str(input.cooc_weighting()),
+        "symmetric": bool(input.cooc_symmetric())
+    }
         }
         return json.dumps(payload, indent=2, ensure_ascii=False)
 
@@ -443,7 +486,12 @@ def server(input, output, session):
                 "sample": float(input.sample()),
                 "lowercase": bool(input.lowercase()),
                 "token_representation": str(input.token_representation()),
-            }
+            },
+            "cooccurrence_config": {
+                    "window": int(input.cooc_window()),
+                    "weighting": str(input.cooc_weighting()),
+                    "symmetric": bool(input.cooc_symmetric())
+                    }
         }
     
         with open(EXPORT_JSON, "w", encoding="utf-8") as f:
