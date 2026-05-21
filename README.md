@@ -1,12 +1,13 @@
 # Aad2vec
 
-Aad2vec est une application Python/Shiny pour explorer des corpus de discours avec
-Word2Vec, des projections ACP, des clusters lexicaux, des cooccurrences et des
-mesures de déplacement sémantique entre sous-corpus.
+Aad2vec est une application Python/Shiny construite avec l'aide de Codex, qui intègre les outils de la sémantique distributionnelle (word2vec, cooccurrences) dans une interface de recherche d'analyse du discours. L'application fournit différents outils de visualisation statistique des résultats (ACP, clustering), et en particulier une représentation du changement sémantique, dans l'esprit de Hamilton & Jurafsky 2014. .
 
-Le projet a été conçu pour travailler sur un corpus de textes électoraux placé dans
+Le projet a été conçu pour travailler sur un corpus de textes placé dans
 `corpus/`, accompagné d'un fichier `metadata.csv` permettant de construire des
-partitions comme l'orientation politique, le parti, la date ou le département.
+partitions. Dans l'exemple livré avec l'application, il s'agit de circulaires électorales (corpus CEVIPOF) qui peuvent être partitionnées suivant l'orientation politique, le parti, la date ou le département.
+
+Pour citer ce travail 
+Hugo Dumoulin, 2026
 
 ## Fonctionnalités
 
