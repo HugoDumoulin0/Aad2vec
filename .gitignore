@@ -1,5 +1,7 @@
 /outputs
 /env
+__pycache__/
+*.py[cod]
 src/.DS_Store
 .DS_Store
 src/__pycache__/shiny_vis.cpython-310.pyc
