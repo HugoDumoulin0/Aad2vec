@@ -6,8 +6,9 @@ Le projet a été conçu pour travailler sur un corpus de textes placé dans
 `corpus/`, accompagné d'un fichier `metadata.csv` permettant de construire des
 partitions. Dans l'exemple livré avec l'application, il s'agit de circulaires électorales (corpus CEVIPOF) qui peuvent être partitionnées suivant l'orientation politique, le parti, la date ou le département.
 
-Pour citer ce travail 
-Hugo Dumoulin, 2026
+## Référence
+Il s'agit ici d'une version de test, présentée dans : 
+> Dumoulin, Hugo (2026) "Le structuralisme brûle-t-il ? Actualité de la Triple Entente linguistique-psychanalyse-marxisme de Pêcheux à l’heure d’une analyse du discours outillée par l’informatique", Revista Linguagem em (Dis)curso, Universidade do Sul de Santa Catarina, Brasil
 
 ## Fonctionnalités
 
