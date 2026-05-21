@@ -1,6 +1,6 @@
 # Aad2vec
 
-Aad2vec est une application Python/Shiny construite avec l'aide de Codex, qui intègre les outils de la sémantique distributionnelle (word2vec, cooccurrences) dans une interface de recherche d'analyse du discours. L'application fournit différents outils de visualisation statistique des résultats (ACP, clustering), et en particulier une représentation du changement sémantique, dans l'esprit de Hamilton & Jurafsky 2014. .
+Aad2vec est une application Python/Shiny construite avec l'aide de Codex, qui intègre les outils de la sémantique distributionnelle (word2vec, cooccurrences) dans une interface de recherche d'analyse du discours. L'application fournit différents outils de visualisation statistique des résultats (ACP, clustering), et en particulier une représentation du changement sémantique, dans l'esprit de Hamilton, Leskovec & Jurafsky 2016.
 
 Le projet a été conçu pour travailler sur un corpus de textes placé dans
 `corpus/`, accompagné d'un fichier `metadata.csv` permettant de construire des
