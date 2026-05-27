@@ -1,31 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Created on Sun Apr 12 21:04:47 2026
 
-@author: hugodumoulin
-"""
-
-from shiny import App, ui, reactive, render
-import os
 import json
 
-OUTPUT_DIR = "../outputs"
-RUNS_DIR = os.path.join(OUTPUT_DIR, "runs")
+from shiny import App, ui, reactive, render
+
+from loaders import available_runs
+
+
 EXPORT_JSON = "launcher_choice.json"
-
-
-def available_runs():
-    if not os.path.isdir(RUNS_DIR):
-        return []
-
-    runs = []
-    for name in os.listdir(RUNS_DIR):
-        path = os.path.join(RUNS_DIR, name)
-        if os.path.isdir(path):
-            runs.append(name)
-
-    return sorted(runs, reverse=True)
 
 
 app_ui = ui.page_fluid(
@@ -51,7 +34,7 @@ app_ui = ui.page_fluid(
     ui.hr(),
 
     ui.h4("Statut"),
-    ui.output_text("status_text")
+    ui.output_text("status_text"),
 )
 
 
@@ -69,13 +52,13 @@ def server(input, output, session):
         runs = available_runs()
 
         if not runs:
-            return ui.p("Aucun run existant trouvé dans ./outputs/runs")
+            return ui.p("Aucun run existant trouvé dans ../outputs/runs")
 
         return ui.input_select(
             "selected_run",
             "Choisir un run existant",
             choices=runs,
-            selected=runs[0]
+            selected=runs[0],
         )
 
     @output
@@ -87,7 +70,6 @@ def server(input, output, session):
     @reactive.event(input.confirm)
     def _confirm():
         mode = input.entry_mode()
-
         payload = {"mode": mode}
 
         if mode == "open_existing":
@@ -95,11 +77,11 @@ def server(input, output, session):
             selected_run = input.selected_run() if hasattr(input, "selected_run") else None
 
             if not runs:
-                status.set("⚠️ Aucun run existant disponible.")
+                status.set("Aucun run existant disponible.")
                 return
 
             if not selected_run:
-                status.set("⚠️ Aucun run sélectionné.")
+                status.set("Aucun run sélectionné.")
                 return
 
             payload["run_name"] = selected_run
@@ -107,7 +89,11 @@ def server(input, output, session):
         with open(EXPORT_JSON, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, ensure_ascii=False)
 
-        status.set(f"✅ Choix sauvegardé dans {EXPORT_JSON}")
+        status.set(f"Choix sauvegardé dans {EXPORT_JSON}")
 
 
 app = App(app_ui, server)
+
+
+if __name__ == "__main__":
+    app.run(port=8001)

@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Thu Apr  2 17:45:34 2026
+Created on Thu May 21 11:41:04 2026
 
 @author: hugodumoulin
 """
-from shiny import App, ui, reactive, render
+
 import os
 import json
+
 import pandas as pd
+from shiny import App, ui, reactive, render
+
 
 CORPUS_PATH = "../corpus"
 METADATA_PATH = os.path.join(CORPUS_PATH, "metadata.csv")
@@ -23,13 +26,8 @@ def normalize_filename(x):
     if not x:
         return None
 
-    # enlève le chemin éventuel
     x = os.path.basename(x)
-
-    # enlève l'extension éventuelle
     x = os.path.splitext(x)[0]
-
-    # normalisation légère
     x = x.lower().strip()
 
     return x
@@ -51,6 +49,7 @@ def list_corpus_files():
 def load_metadata():
     if not os.path.exists(METADATA_PATH):
         return None
+
     return pd.read_csv(METADATA_PATH, sep=";")
 
 
@@ -59,11 +58,19 @@ def detect_file_column(df, corpus_files):
         return None
 
     candidates = [
-        "filename", "file", "fichier", "nom_fichier",
-        "document", "doc", "source", "texte", "id"
+        "filename",
+        "file",
+        "fichier",
+        "nom_fichier",
+        "document",
+        "doc",
+        "source",
+        "texte",
+        "id",
     ]
 
     lower_map = {c.lower(): c for c in df.columns}
+
     for cand in candidates:
         if cand in lower_map:
             return lower_map[cand]
@@ -95,7 +102,6 @@ def build_groups_from_metadata(df, file_col, segment_col, corpus_files):
     if df is None or file_col is None or segment_col is None:
         return groups
 
-    # mapping nom normalisé -> vrai nom de fichier
     corpus_lookup = {
         normalize_filename(f): f
         for f in corpus_files
@@ -126,25 +132,26 @@ def build_groups_from_metadata(df, file_col, segment_col, corpus_files):
         groups.setdefault(group_name, []).append(real_filename)
         matched += 1
 
-    for k in groups:
-        groups[k] = sorted(set(groups[k]))
+    for key in groups:
+        groups[key] = sorted(set(groups[key]))
 
     print(f"[DEBUG] lignes appariées : {matched}")
+
     if unmatched_examples:
         print("[DEBUG] exemples non appariés :", unmatched_examples)
 
-    return dict(sorted(groups.items(), key=lambda x: x[0].lower()))
+    return dict(sorted(groups.items(), key=lambda item: item[0].lower()))
 
 
 def groups_to_dataframe(groups):
     rows = []
 
-    for group, files in sorted(groups.items(), key=lambda x: x[0].lower()):
+    for group, files in sorted(groups.items(), key=lambda item: item[0].lower()):
         rows.append(
             {
                 "groupe": group,
                 "nb_fichiers": len(files),
-                "fichiers": ", ".join(files)
+                "fichiers": ", ".join(files),
             }
         )
 
@@ -157,7 +164,7 @@ def groups_to_dataframe(groups):
 app_ui = ui.page_fluid(
     ui.h1("Aad2Vec"),
     ui.h2("Configuration"),
-    
+
     ui.hr(),
 
     ui.h3("Paramètres d'entraînement Word2Vec"),
@@ -165,63 +172,106 @@ app_ui = ui.page_fluid(
     ui.row(
         ui.column(
             2,
-            ui.input_numeric("vector_size", "Dim", value=300, min=50, max=1000)
+            ui.input_numeric(
+                "vector_size",
+                "Dim",
+                value=300,
+                min=50,
+                max=1000,
+            ),
         ),
         ui.column(
             2,
-            ui.input_numeric("window", "Window", value=5, min=1, max=20)
+            ui.input_numeric(
+                "window",
+                "Window",
+                value=5,
+                min=1,
+                max=20,
+            ),
         ),
         ui.column(
             2,
-            ui.input_numeric("min_count", "Min count", value=5, min=1, max=50)
+            ui.input_numeric(
+                "min_count",
+                "Min count",
+                value=5,
+                min=1,
+                max=50,
+            ),
         ),
         ui.column(
             2,
-            ui.input_numeric("epochs", "Epochs", value=50, min=1, max=500)
+            ui.input_numeric(
+                "epochs",
+                "Epochs",
+                value=50,
+                min=1,
+                max=500,
+            ),
         ),
         ui.column(
             2,
             ui.input_select(
                 "sg",
                 "Architecture",
-                choices={"1": "Skip-gram", "0": "CBOW"},
-                selected="1"
-            )
+                choices={
+                    "1": "Skip-gram",
+                    "0": "CBOW",
+                },
+                selected="1",
+            ),
         ),
     ),
 
     ui.row(
-    ui.column(
-        2,
-        ui.input_numeric("negative", "Negative", value=5, min=1, max=50)
+        ui.column(
+            2,
+            ui.input_numeric(
+                "negative",
+                "Negative",
+                value=5,
+                min=1,
+                max=50,
+            ),
+        ),
+        ui.column(
+            2,
+            ui.input_numeric(
+                "sample",
+                "Sample",
+                value=0.001,
+                min=0.0,
+                max=0.1,
+                step=0.0001,
+            ),
+        ),
+        ui.column(
+            2,
+            ui.input_checkbox(
+                "lowercase",
+                "Tout en minuscules",
+                value=True,
+            ),
+        ),
+        ui.column(
+            3,
+            ui.input_select(
+                "token_representation",
+                "Unités d'entraînement",
+                choices={
+                    "word": "Formes graphiques",
+                    "lemma": "Lemmes",
+                },
+                selected="word",
+            ),
+        ),
     ),
-    ui.column(
-        2,
-        ui.input_numeric("sample", "Sample", value=0.001, min=0.0, max=0.1, step=0.0001)
-    ),
-    ui.column(
-        2,
-        ui.input_checkbox("lowercase", "Tout en minuscules", value=True)
-    ),
-    
-    ui.column(
-        3,
-        ui.input_select(
-            "token_representation",
-            "Unités d'entraînement",
-            choices={
-                "word": "Formes graphiques",
-                "lemma": "Lemmes"
-            },
-            selected="surface"
-        )
-    ),
-),
-    
+
     ui.hr(),
-    
+
     ui.h3("Paramètres Cooccurrence"),
-    
+
     ui.row(
         ui.column(
             3,
@@ -230,8 +280,8 @@ app_ui = ui.page_fluid(
                 "Fenêtre de cooccurrence",
                 value=2,
                 min=1,
-                max=20
-            )
+                max=20,
+            ),
         ),
         ui.column(
             3,
@@ -240,23 +290,23 @@ app_ui = ui.page_fluid(
                 "Pondération",
                 choices={
                     "raw": "Comptage brut",
-                    "ppmi": "PPMI"
+                    "ppmi": "PPMI",
                 },
-                selected="raw"
-            )
+                selected="raw",
+            ),
         ),
         ui.column(
             3,
             ui.input_checkbox(
                 "cooc_symmetric",
                 "Fenêtre symétrique",
-                value=True
-            )
-        )
+                value=True,
+            ),
+        ),
     ),
 
     ui.hr(),
-    
+
     ui.h3("Paramètres de partition du corpus"),
 
     ui.row(
@@ -271,7 +321,7 @@ app_ui = ui.page_fluid(
                 },
                 selected="automatique",
             ),
-        )
+        ),
     ),
 
     ui.output_ui("mode_controls"),
@@ -279,8 +329,20 @@ app_ui = ui.page_fluid(
     ui.hr(),
 
     ui.row(
-        ui.column(3, ui.input_action_button("save", "Exporter JSON")),
-        ui.column(3, ui.input_action_button("reset_groups", "Réinitialiser les groupes")),
+        ui.column(
+            3,
+            ui.input_action_button(
+                "save",
+                "Exporter JSON",
+            ),
+        ),
+        ui.column(
+            3,
+            ui.input_action_button(
+                "reset_groups",
+                "Réinitialiser les groupes",
+            ),
+        ),
     ),
 
     ui.hr(),
@@ -294,6 +356,28 @@ app_ui = ui.page_fluid(
     ui.h4("Aperçu JSON"),
     ui.output_text_verbatim("json_preview"),
 )
+
+
+def make_payload(input, subcorpora):
+    return {
+        "subcorpora": subcorpora,
+        "training_config": {
+            "vector_size": int(input.vector_size()),
+            "window": int(input.window()),
+            "min_count": int(input.min_count()),
+            "epochs": int(input.epochs()),
+            "sg": int(input.sg()),
+            "negative": int(input.negative()),
+            "sample": float(input.sample()),
+            "lowercase": bool(input.lowercase()),
+            "token_representation": str(input.token_representation()),
+        },
+        "cooccurrence_config": {
+            "window": int(input.cooc_window()),
+            "weighting": str(input.cooc_weighting()),
+            "symmetric": bool(input.cooc_symmetric()),
+        },
+    }
 
 
 def server(input, output, session):
@@ -312,10 +396,16 @@ def server(input, output, session):
                 ui.input_checkbox_group(
                     "files",
                     "Choisir les fichiers",
-                    choices=corpus_files
+                    choices=corpus_files,
                 ),
-                ui.input_text("label", "Nom du groupe"),
-                ui.input_action_button("add_manual", "Ajouter au groupe")
+                ui.input_text(
+                    "label",
+                    "Nom du groupe",
+                ),
+                ui.input_action_button(
+                    "add_manual",
+                    "Ajouter au groupe",
+                ),
             )
 
         df = load_metadata()
@@ -323,7 +413,7 @@ def server(input, output, session):
         if df is None:
             return ui.TagList(
                 ui.h4("Mode automatique"),
-                ui.p("Aucun fichier metadata.csv trouvé dans le dossier ./corpus.")
+                ui.p("Aucun fichier metadata.csv trouvé dans le dossier ../corpus."),
             )
 
         file_col = detect_file_column(df, corpus_files)
@@ -335,15 +425,15 @@ def server(input, output, session):
                 ui.p(
                     "Noms attendus de préférence : filename, file, fichier, "
                     "nom_fichier, document, source."
-                )
+                ),
             )
 
-        segment_choices = [c for c in df.columns if c != file_col]
+        segment_choices = [col for col in df.columns if col != file_col]
 
         if not segment_choices:
             return ui.TagList(
                 ui.h4("Mode automatique"),
-                ui.p("Aucune colonne de partition disponible dans metadata.csv.")
+                ui.p("Aucune colonne de partition disponible dans metadata.csv."),
             )
 
         return ui.TagList(
@@ -353,12 +443,12 @@ def server(input, output, session):
                 "segment_col",
                 "Métadonnée de partition",
                 choices=segment_choices,
-                selected=segment_choices[0]
+                selected=segment_choices[0],
             ),
             ui.input_action_button(
                 "build_auto",
-                "Construire automatiquement les groupes"
-            )
+                "Construire automatiquement les groupes",
+            ),
         )
 
     @output
@@ -369,26 +459,7 @@ def server(input, output, session):
     @output
     @render.text
     def json_preview():
-        payload = {
-            "subcorpora": groups.get(),
-            "training_config": {
-                "vector_size": int(input.vector_size()),
-                "window": int(input.window()),
-                "min_count": int(input.min_count()),
-                "epochs": int(input.epochs()),
-                "sg": int(input.sg()),
-                "negative": int(input.negative()),
-                "sample": float(input.sample()),
-                "lowercase": bool(input.lowercase()),
-                "token_representation": str(input.token_representation()),
-            }
-            ,
-            "cooccurrence_config": {
-        "window": int(input.cooc_window()),
-        "weighting": str(input.cooc_weighting()),
-        "symmetric": bool(input.cooc_symmetric())
-    }
-        }
+        payload = make_payload(input, groups.get())
         return json.dumps(payload, indent=2, ensure_ascii=False)
 
     @output
@@ -407,20 +478,20 @@ def server(input, output, session):
         label = input.label().strip() if input.label() is not None else ""
 
         if not label:
-            status_msg.set("⚠️ Nom de groupe manquant.")
+            status_msg.set("Nom de groupe manquant.")
             return
 
         if not selected:
-            status_msg.set("⚠️ Aucun fichier sélectionné.")
+            status_msg.set("Aucun fichier sélectionné.")
             return
 
-        current = {k: list(v) for k, v in groups.get().items()}
+        current = {key: list(value) for key, value in groups.get().items()}
         current.setdefault(label, [])
         current[label].extend(selected)
         current[label] = sorted(set(current[label]))
 
         groups.set(current)
-        status_msg.set(f"✅ Groupe '{label}' mis à jour avec {len(selected)} fichier(s).")
+        status_msg.set(f"Groupe '{label}' mis à jour avec {len(selected)} fichier(s).")
 
     @reactive.Effect
     @reactive.event(input.build_auto)
@@ -432,7 +503,7 @@ def server(input, output, session):
         df = load_metadata()
 
         if df is None:
-            status_msg.set("⚠️ metadata.csv introuvable dans ./corpus.")
+            status_msg.set("metadata.csv introuvable dans ../corpus.")
             return
 
         file_col = detect_file_column(df, corpus_files)
@@ -444,18 +515,23 @@ def server(input, output, session):
         print("[DEBUG] colonne de partition :", segment_col)
 
         if file_col is None:
-            status_msg.set("⚠️ Impossible d'identifier la colonne des noms de fichiers.")
+            status_msg.set("Impossible d'identifier la colonne des noms de fichiers.")
             return
 
-        auto_groups = build_groups_from_metadata(df, file_col, segment_col, corpus_files)
+        auto_groups = build_groups_from_metadata(
+            df,
+            file_col,
+            segment_col,
+            corpus_files,
+        )
 
         if not auto_groups:
-            status_msg.set("⚠️ Aucun groupe généré. Vérifie les noms de fichiers et la colonne choisie.")
+            status_msg.set("Aucun groupe généré. Vérifie les noms de fichiers et la colonne choisie.")
             return
 
         groups.set(auto_groups)
         status_msg.set(
-            f"✅ partition automatique terminée selon '{segment_col}' "
+            f"Partition automatique terminée selon '{segment_col}' "
             f"({len(auto_groups)} groupe(s))."
         )
 
@@ -463,41 +539,27 @@ def server(input, output, session):
     @reactive.event(input.reset_groups)
     def _reset_groups():
         groups.set({})
-        status_msg.set("🧹 Groupes réinitialisés.")
+        status_msg.set("Groupes réinitialisés.")
 
     @reactive.Effect
     @reactive.event(input.save)
     def _save_json():
         subcorpora = groups.get()
-    
+
         if not subcorpora:
-            status_msg.set("⚠️ Aucun groupe à exporter.")
+            status_msg.set("Aucun groupe à exporter.")
             return
-    
-        payload = {
-            "subcorpora": subcorpora,
-            "training_config": {
-                "vector_size": int(input.vector_size()),
-                "window": int(input.window()),
-                "min_count": int(input.min_count()),
-                "epochs": int(input.epochs()),
-                "sg": int(input.sg()),
-                "negative": int(input.negative()),
-                "sample": float(input.sample()),
-                "lowercase": bool(input.lowercase()),
-                "token_representation": str(input.token_representation()),
-            },
-            "cooccurrence_config": {
-                    "window": int(input.cooc_window()),
-                    "weighting": str(input.cooc_weighting()),
-                    "symmetric": bool(input.cooc_symmetric())
-                    }
-        }
-    
+
+        payload = make_payload(input, subcorpora)
+
         with open(EXPORT_JSON, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, ensure_ascii=False)
-    
-        status_msg.set(f"💾 {EXPORT_JSON} sauvegardé avec succès.")
+
+        status_msg.set(f"{EXPORT_JSON} sauvegardé avec succès.")
 
 
 app = App(app_ui, server)
+
+
+if __name__ == "__main__":
+    app.run(port=8002)
