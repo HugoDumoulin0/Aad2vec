@@ -5,3 +5,4 @@ src/.DS_Store
 src/__pycache__/shiny_vis.cpython-310.pyc
 src/__pycache__/shiny_start.cpython-310.pyc
 .DS_Store
+/src/__pycache__
