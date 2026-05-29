@@ -18,6 +18,10 @@ runs0 = available_runs()
 env_default_run = os.environ.get("DEFAULT_RUN_NAME")
 default_run = env_default_run if env_default_run in runs0 else (runs0[0] if runs0 else None)
 labels0 = corpus_choices(default_run) if default_run else []
+detail_labels0 = [
+    label for label in labels0
+    if label not in [COMPLETE_CORPUS_LABEL, "Aucune PCA disponible"]
+]
 
 app_ui = ui.page_fluid(
     ui.h2("Visualisation sémantique"),
@@ -426,10 +430,38 @@ app_ui = ui.page_fluid(
     ui.h4("Distances au global"),
     ui.output_data_frame("word_shift_table_cooc"),
 
+    ui.input_select(
+        "cooc_detail_corpus_label",
+        "Sous-corpus affiché",
+        choices=detail_labels0 if detail_labels0 else ["Aucun corpus disponible"],
+        selected=detail_labels0[0] if detail_labels0 else "Aucun corpus disponible",
+    ),
+    ui.input_numeric(
+        "cooc_top_neighbors_n",
+        "Nombre de mots",
+        value=15,
+        min=5,
+        max=100
+    ),
+
+    ui.h4("Mots les plus similaires par sous-corpus (matrice PPMI)"),
+    ui.output_ui("cooc_similar_words_by_subcorpus_ui"),
+
+    ui.h4("Mots les plus cooccurrents par sous-corpus (rang PPMI)"),
+    ui.output_ui("cooc_top_words_by_subcorpus_ui"),
+
+    ui.h4("Contextes caractéristiques"),
+    ui.input_numeric(
+        "cooc_top_contexts_n",
+        "Contextes par sous-corpus",
+        value=10,
+        min=3,
+        max=50
+    ),
+    ui.output_ui("cooc_characteristic_contexts_ui"),
+
     ui.h4("Mots les plus dispersés"),
     ui.output_data_frame("word_spread_table_cooc"),
 )
     )
     )
-
-

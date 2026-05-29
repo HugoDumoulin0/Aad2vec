@@ -37,9 +37,12 @@ from pca_w2v import (
 
 from cooccurrences import (
     COOC_CACHE,
+    characteristic_contexts_for_word_cooc,
     compute_cooc_pca,
     compute_global_cooc_pca,
     project_word_across_subcorpora_cooc,
+    top_similar_words_by_cooc,
+    top_cooccurring_words,
 )
 
 from semantic_shift import (
@@ -1015,9 +1018,24 @@ def server(input, output, session):
                 selected=selected,
                 session=session,
             )
+
+            detail_current = input.cooc_detail_corpus_label()
+            detail_selected = detail_current if detail_current in labels else labels[0]
+            ui.update_select(
+                "cooc_detail_corpus_label",
+                choices=labels,
+                selected=detail_selected,
+                session=session,
+            )
         else:
             ui.update_select(
                 "corpus_label_cooc",
+                choices=["Aucun corpus disponible"],
+                selected="Aucun corpus disponible",
+                session=session,
+            )
+            ui.update_select(
+                "cooc_detail_corpus_label",
                 choices=["Aucun corpus disponible"],
                 selected="Aucun corpus disponible",
                 session=session,
@@ -1316,6 +1334,104 @@ def server(input, output, session):
         )
     
         return render.DataGrid(sub)
+
+    @output
+    @render.ui
+    def cooc_similar_words_by_subcorpus_ui():
+        run_name = input.run_name()
+        word = input.tracked_word_cooc()
+
+        if not run_name or run_name == "Aucun run disponible":
+            return ui.p("Aucun run disponible.")
+
+        if not word:
+            return ui.p("Choisir un mot.")
+
+        label = input.cooc_detail_corpus_label()
+        labels = available_labels(run_name)
+        if not label or label == "Aucun corpus disponible" or label not in labels:
+            return ui.p("Aucun sous-corpus sélectionné.")
+
+        sentences = load_sentences(run_name, label)
+        df = top_similar_words_by_cooc(
+            sentences=sentences,
+            target_word=word,
+            window_size=int(input.cooc_window_size()),
+            topn=int(input.cooc_top_neighbors_n()),
+        )
+
+        return ui.card(
+            ui.card_header(f"Sous-corpus : {label}"),
+            dataframe_to_simple_html_table(df),
+        )
+
+    @output
+    @render.ui
+    def cooc_top_words_by_subcorpus_ui():
+        run_name = input.run_name()
+        word = input.tracked_word_cooc()
+
+        if not run_name or run_name == "Aucun run disponible":
+            return ui.p("Aucun run disponible.")
+
+        if not word:
+            return ui.p("Choisir un mot.")
+
+        label = input.cooc_detail_corpus_label()
+        labels = available_labels(run_name)
+        if not label or label == "Aucun corpus disponible" or label not in labels:
+            return ui.p("Aucun sous-corpus sélectionné.")
+
+        topn = int(input.cooc_top_neighbors_n())
+        window_size = int(input.cooc_window_size())
+
+        sentences = load_sentences(run_name, label)
+        df = top_cooccurring_words(
+            sentences=sentences,
+            target_word=word,
+            window_size=window_size,
+            topn=topn,
+        )
+
+        return ui.card(
+            ui.card_header(f"Sous-corpus : {label}"),
+            dataframe_to_simple_html_table(df),
+        )
+
+    @output
+    @render.ui
+    def cooc_characteristic_contexts_ui():
+        run_name = input.run_name()
+        word = input.tracked_word_cooc()
+
+        if not run_name or run_name == "Aucun run disponible":
+            return ui.p("Aucun run disponible.")
+
+        if not word:
+            return ui.p("Choisir un mot.")
+
+        label = input.cooc_detail_corpus_label()
+        labels = available_labels(run_name)
+        if not label or label == "Aucun corpus disponible" or label not in labels:
+            return ui.p("Aucun sous-corpus sélectionné.")
+
+        topn_words = int(input.cooc_top_neighbors_n())
+        topn_contexts = int(input.cooc_top_contexts_n())
+        window_size = int(input.cooc_window_size())
+
+        sentences = load_sentences(run_name, label)
+        df = characteristic_contexts_for_word_cooc(
+            sentences=sentences,
+            target_word=word,
+            window_size=window_size,
+            topn_words=topn_words,
+            topn_contexts=topn_contexts,
+        )
+
+        return ui.card(
+            ui.card_header(f"Sous-corpus : {label}"),
+            dataframe_to_simple_html_table(df),
+        )
     
     @output
     @render.data_frame
@@ -1325,7 +1441,7 @@ def server(input, output, session):
         df_spread = compute_word_spread_table(df_positions_all)
     
         if df_spread.empty:
-            return render.DataGrid(pd.DataFrame())
+            return render.DataGrid(pd.DataFrame(), selection_mode="row")
     
         top_n = int(input.top_spread_words())
     
@@ -1334,7 +1450,33 @@ def server(input, output, session):
         df_spread["max_pairwise_dist_2d"] = df_spread["max_pairwise_dist_2d"].round(4)
         df_spread["mean_pairwise_dist_2d"] = df_spread["mean_pairwise_dist_2d"].round(4)
     
-        return render.DataGrid(df_spread)
+        return render.DataGrid(df_spread, selection_mode="row")
+
+    @reactive.Effect
+    def _update_tracked_word_cooc_from_spread_selection():
+        selected = word_spread_table_cooc.data_view(selected=True)
+
+        if selected is None or selected.empty or "word" not in selected.columns:
+            return
+
+        word = str(selected.iloc[0]["word"])
+
+        df_global, _, df_positions_all = global_shift_data_cooc()
+        if df_global.empty or df_positions_all.empty:
+            return
+
+        available = set(df_positions_all["word"].dropna().astype(str).tolist())
+        words = [w for w in df_global["word"].dropna().astype(str).tolist() if w in available]
+
+        if word not in words:
+            return
+
+        ui.update_selectize(
+            "tracked_word_cooc",
+            choices=words,
+            selected=word,
+            session=session,
+        )
     
     @reactive.calc
     def global_shift_data_cooc():
