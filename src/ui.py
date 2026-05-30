@@ -11,13 +11,18 @@ import os
 from shiny import ui
 
 from config import POS_OPTIONS, COMPLETE_CORPUS_LABEL
-from loaders import available_runs, corpus_choices
+from loaders import available_runs, corpus_choices, load_run_metadata
 
 
 runs0 = available_runs()
 env_default_run = os.environ.get("DEFAULT_RUN_NAME")
 default_run = env_default_run if env_default_run in runs0 else (runs0[0] if runs0 else None)
 labels0 = corpus_choices(default_run) if default_run else []
+default_training_config = (
+    load_run_metadata(default_run).get("training_config", {})
+    if default_run else {}
+)
+default_window = int(default_training_config.get("window", 5))
 detail_labels0 = [
     label for label in labels0
     if label not in [COMPLETE_CORPUS_LABEL, "Aucune PCA disponible"]
@@ -69,7 +74,7 @@ app_ui = ui.page_fluid(
                 "pos_filter_sub",
                 "POS affichés",
                 choices=POS_OPTIONS,
-                selected=["NOUN"],
+                selected=["ALL"],
                 multiple=True
             ),
             ui.input_numeric(
@@ -89,6 +94,7 @@ app_ui = ui.page_fluid(
         
             ui.h3("Aad2vec"),
             ui.h4("Graphique ACP"),
+            ui.output_text_verbatim("cluster_console_text"),
             ui.output_plot("pca_plot", height="800px"),
         
             ui.h4("Coordonnées"),
@@ -179,7 +185,7 @@ app_ui = ui.page_fluid(
                 "pos_filter_global",
                 "POS affichés dans l'ACP globale",
                 choices=POS_OPTIONS,
-                selected=["NOUN"],
+                selected=["ALL"],
                 multiple=True
             ),
             ui.input_numeric(
@@ -216,12 +222,13 @@ app_ui = ui.page_fluid(
                     ui.input_checkbox(
                         "show_global_labels",
                         "Afficher les labels du fond global",
-                        value=False
+                        value=True
                     )
                 ),
             ),  
 
             ui.h4("Déplacement sémantique du mot"),
+            ui.output_text_verbatim("shift_console_text"),
             ui.output_plot("word_shift_plot", height="850px"),
 
             ui.h4("Distances au global"),
@@ -266,6 +273,31 @@ app_ui = ui.page_fluid(
                 ),
             ),
             ui.output_ui("neighbors_all_subcorpora_ui"),
+
+            ui.h4("Mots de contexte qui prédisent le mot dans tous les sous-corpus"),
+            ui.row(
+                ui.column(
+                    3,
+                    ui.input_numeric(
+                        "predictive_context_topn_all",
+                        "Top contextes par sous-corpus",
+                        value=15,
+                        min=5,
+                        max=100
+                    ),
+                ),
+                ui.column(
+                    3,
+                    ui.input_numeric(
+                        "predictive_context_min_count_all",
+                        "Fréquence minimale",
+                        value=1,
+                        min=1,
+                        max=100000
+                    ),
+                ),
+            ),
+            ui.output_ui("predictive_context_words_all_subcorpora_ui"),
             
             ui.h4("Mots les plus dispersés entre sous-corpus"),
             ui.input_numeric(
@@ -301,9 +333,9 @@ app_ui = ui.page_fluid(
             ui.input_numeric(
                 "cooc_window",
                 "Fenêtre ± tokens",
-                value=5,
+                value=default_window,
                 min=1,
-                max=20
+                max=100
             ),
         ),
 
@@ -325,7 +357,7 @@ app_ui = ui.page_fluid(
                 "cooc_pos_filter",
                 "POS affichés",
                 choices=POS_OPTIONS,
-                selected=["NOUN"],
+                selected=["ALL"],
                 multiple=True
             ),
         ),
@@ -347,6 +379,7 @@ app_ui = ui.page_fluid(
     
 
     ui.h4("ACP cooccurrences"),
+    ui.output_text_verbatim("cooc_console_text"),
     ui.output_plot("cooc_plot", height="800px"),
     
     ui.h4("Affichage ACP cooccurrences"),
@@ -408,7 +441,7 @@ app_ui = ui.page_fluid(
         ui.input_checkbox(
             "show_global_labels_cooc",
             "Afficher les labels du fond global",
-            value=False
+            value=True
         )
     ),
 ),
@@ -417,9 +450,17 @@ app_ui = ui.page_fluid(
     ui.input_numeric(
         "cooc_window_size",
         "Fenêtre cooccurrences",
-        value=4,
+        value=default_window,
         min=1,
-        max=10
+        max=100
+    ),
+
+    ui.input_selectize(
+        "cooc_shift_pos_filter",
+        "POS concernés",
+        choices=POS_OPTIONS,
+        selected=["ALL"],
+        multiple=True
     ),
 
     ui.output_ui("word_selector_ui_cooc"),
@@ -436,12 +477,27 @@ app_ui = ui.page_fluid(
         choices=detail_labels0 if detail_labels0 else ["Aucun corpus disponible"],
         selected=detail_labels0[0] if detail_labels0 else "Aucun corpus disponible",
     ),
-    ui.input_numeric(
-        "cooc_top_neighbors_n",
-        "Nombre de mots",
-        value=15,
-        min=5,
-        max=100
+    ui.row(
+        ui.column(
+            3,
+            ui.input_numeric(
+                "cooc_top_neighbors_n",
+                "Nombre de mots",
+                value=15,
+                min=5,
+                max=100
+            ),
+        ),
+        ui.column(
+            3,
+            ui.input_numeric(
+                "cooc_min_token_frequency",
+                "Fréquence minimale",
+                value=2,
+                min=1,
+                max=100000
+            ),
+        ),
     ),
 
     ui.h4("Mots les plus similaires par sous-corpus (matrice PPMI)"),
