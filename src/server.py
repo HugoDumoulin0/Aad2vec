@@ -66,6 +66,29 @@ from utils import (
 
 
 def server(input, output, session):
+    cluster_console = reactive.Value("ACP clusters : en attente.")
+    shift_console = reactive.Value("Évolution d'un mot : en attente.")
+    cooc_console = reactive.Value("Cooccurrences : en attente.")
+
+    def token_display_column(run_name):
+        meta = load_run_metadata(run_name)
+        token_representation = (
+            meta.get("training_config", {})
+            .get("token_representation", "word")
+        )
+        return "lemma" if token_representation == "lemma" else "word"
+
+    def rename_token_column_for_display(df, run_name):
+        display_col = token_display_column(run_name)
+        if display_col != "word" and "word" in df.columns:
+            return df.rename(columns={"word": display_col})
+        return df
+
+    def selected_pos(input_value):
+        values = tuple(input_value) if input_value is not None else tuple()
+        if "ALL" in values:
+            return tuple()
+        return values
 
     # ---- hyperparamètres du run
     @output
@@ -97,17 +120,24 @@ def server(input, output, session):
         label = input.corpus_label()
 
         if not run_name or run_name == "Aucun run disponible":
+            cluster_console.set("ACP clusters : aucun run disponible.")
             return pd.DataFrame(columns=["word", "x", "y", "cluster"]), {}
 
         if not label or label == "Aucune PCA disponible":
+            cluster_console.set("ACP clusters : aucune PCA disponible.")
             return pd.DataFrame(columns=["word", "x", "y", "cluster"]), {}
 
         model = load_model_for_corpus(run_name, label)
         label_key = pca_cache_label(label)
 
-        allowed_pos = tuple(input.pos_filter_sub()) if input.pos_filter_sub() is not None else tuple()
+        allowed_pos = selected_pos(input.pos_filter_sub())
         top_n = int(input.top_words_sub())
         n_clusters = int(input.n_clusters_sub())
+
+        cluster_console.set(
+            "ACP clusters : calcul/projection en cours "
+            f"({label}, POS={allowed_pos or 'ALL'}, top_n={top_n}, clusters={n_clusters})."
+        )
 
         df, meta = compute_dynamic_pca_and_clusters(
             run_name=run_name,
@@ -119,6 +149,12 @@ def server(input, output, session):
             cluster_on_pca=True
         )
 
+        cluster_console.set(
+            "ACP clusters : calcul terminé "
+            f"({meta.get('n_words', len(df))} mots, "
+            f"{meta.get('n_clusters', n_clusters)} clusters)."
+        )
+
         return df, meta
     
     
@@ -127,12 +163,18 @@ def server(input, output, session):
         run_name = input.run_name()
 
         if not run_name or run_name == "Aucun run disponible":
+            shift_console.set("Évolution d'un mot : aucun run disponible.")
             return pd.DataFrame(columns=["word", "x", "y"]), {}, None
 
         global_model = load_global_model(run_name)
 
-        allowed_pos = tuple(input.pos_filter_global()) if input.pos_filter_global() is not None else tuple()
+        allowed_pos = selected_pos(input.pos_filter_global())
         top_n = int(input.top_words_global())
+
+        shift_console.set(
+            "Évolution d'un mot : calcul de l'ACP globale "
+            f"(POS={allowed_pos or 'ALL'}, top_n={top_n})."
+        )
 
         df, meta, pca = compute_dynamic_global_pca(
             run_name=run_name,
@@ -141,7 +183,22 @@ def server(input, output, session):
             top_n=top_n
         )
 
+        shift_console.set(
+            "Évolution d'un mot : ACP globale prête "
+            f"({meta.get('n_words', len(df))} mots)."
+        )
+
         return df, meta, pca
+
+    @output
+    @render.text
+    def cluster_console_text():
+        return cluster_console.get()
+
+    @output
+    @render.text
+    def shift_console_text():
+        return shift_console.get()
     
     
     
@@ -869,6 +926,7 @@ def server(input, output, session):
         global_model = load_global_model(run_name)
 
         if df_global.empty or global_model is None or pca is None:
+            shift_console.set("Évolution d'un mot : projection impossible avec les données courantes.")
             return df_global, meta, pd.DataFrame(columns=[
                 "subcorpus", "word", "x", "y",
                 "cosine_similarity_to_global",
@@ -878,12 +936,22 @@ def server(input, output, session):
         labels = available_labels(run_name)
         allowed_words = df_global["word"].dropna().astype(str).tolist()
 
+        shift_console.set(
+            "Évolution d'un mot : projection du mot global dans les sous-corpus "
+            f"({len(labels)} sous-corpus, {len(allowed_words)} mots candidats)."
+        )
+
         df_positions_all = project_all_words_across_subcorpora(
             pca=pca,
             global_model=global_model,
             labels=labels,
             allowed_words=allowed_words,
             run_name=run_name
+        )
+
+        shift_console.set(
+            "Évolution d'un mot : trajectoires prêtes "
+            f"({len(df_positions_all)} positions projetées)."
         )
 
         return df_global, meta, df_positions_all
@@ -955,7 +1023,57 @@ def server(input, output, session):
             return ui.p("Aucun sous-corpus disponible.")
     
         return ui.row(*cards)
-    
+
+    @output
+    @render.ui
+    def predictive_context_words_all_subcorpora_ui():
+        run_name = input.run_name()
+        word = input.tracked_word() if hasattr(input, "tracked_word") else None
+
+        if not run_name or run_name == "Aucun run disponible":
+            return ui.p("Aucun run disponible.")
+
+        if not word:
+            return ui.p("Choisir un mot.")
+
+        labels = available_labels(run_name)
+        topn = int(input.predictive_context_topn_all())
+        min_count = int(input.predictive_context_min_count_all())
+        layout_mode = input.neighbors_layout()
+        display_col = token_display_column(run_name)
+
+        cards = []
+
+        for label in labels:
+            model = load_model(run_name, label)
+            df = characteristic_context_words_for_cluster(
+                cluster_words=[word],
+                model=model,
+                topn=topn,
+                min_count=min_count,
+                exclude_cluster_words=True,
+                allowed_pos=None,
+                use_cosine=True,
+            )
+
+            if display_col == "lemma" and "context_word" in df.columns:
+                df = df.rename(columns={"context_word": "context_lemma"})
+
+            card = ui.card(
+                ui.card_header(f"Sous-corpus : {label}"),
+                dataframe_to_simple_html_table(df)
+            )
+
+            if layout_mode == "grid":
+                cards.append(ui.column(4, card))
+            else:
+                cards.append(ui.column(12, card))
+
+        if not cards:
+            return ui.p("Aucun sous-corpus disponible.")
+
+        return ui.row(*cards)
+
     # ---- cooccurrences calc
     @reactive.calc
     def cooc_pca_data():
@@ -976,6 +1094,9 @@ def server(input, output, session):
                 sentences.extend(load_sentences(run_name, sub_label))
         else:
             sentences = load_sentences(run_name, label)
+
+        cfg = load_run_metadata(run_name).get("training_config", {})
+        min_count = int(cfg.get("min_count", 1))
     
         key = (
             run_name,
@@ -983,29 +1104,75 @@ def server(input, output, session):
             int(input.cooc_window()),
             int(input.cooc_top_words()),
             int(input.cooc_n_clusters()),
-            tuple(input.cooc_pos_filter())
+            selected_pos(input.cooc_pos_filter()),
+            min_count,
         )
     
         if key in COOC_CACHE:
+            cooc_console.set("Cooccurrences : projection récupérée depuis le cache.")
             return COOC_CACHE[key]
     
-        df, meta = compute_cooc_pca(
-            sentences=sentences,
-            allowed_pos=tuple(input.cooc_pos_filter()),
-            top_n=int(input.cooc_top_words()),
-            window_size=int(input.cooc_window()),
-            n_clusters=int(input.cooc_n_clusters()),
-            cluster_on_pca=True,
+        matrix_key = (
+            run_name,
+            label,
+            "full_ppmi",
+            int(input.cooc_window()),
+            min_count,
+        )
+
+        def set_cooc_status(message):
+            cooc_console.set(message)
+
+        cooc_console.set("Cooccurrences : démarrage du calcul.")
+
+        with ui.Progress(min=0, max=1) as progress:
+            progress.set(0.15, message="Cooccurrences", detail="Préparation de la matrice complète...")
+            df, meta = compute_cooc_pca(
+                sentences=sentences,
+                allowed_pos=selected_pos(input.cooc_pos_filter()),
+                top_n=int(input.cooc_top_words()),
+                window_size=int(input.cooc_window()),
+                n_clusters=int(input.cooc_n_clusters()),
+                min_count=min_count,
+                cluster_on_pca=True,
+                matrix_cache_key=matrix_key,
+                status_callback=set_cooc_status,
+            )
+            progress.set(0.9, message="Cooccurrences", detail="Finalisation de l'ACP...")
+
+        cooc_console.set(
+            "Cooccurrences : calcul terminé "
+            f"({meta.get('n_words', 0)} mots affichés, "
+            f"{meta.get('n_vocab_total', 0)} mots dans la matrice complète, "
+            f"min_count={meta.get('min_count', min_count)})."
         )
     
         COOC_CACHE[key] = (df, meta)
         return df, meta
+
+    @output
+    @render.text
+    def cooc_console_text():
+        return cooc_console.get()
 
     
     @reactive.Effect
     def _update_cooc_labels_for_run():
         run_name = input.run_name()
         labels = available_labels(run_name)
+        cfg = load_run_metadata(run_name).get("training_config", {})
+        run_window = int(cfg.get("window", 5))
+
+        ui.update_numeric(
+            "cooc_window",
+            value=run_window,
+            session=session,
+        )
+        ui.update_numeric(
+            "cooc_window_size",
+            value=run_window,
+            session=session,
+        )
     
         if labels:
             choices = ["Corpus complet"] + labels
@@ -1251,6 +1418,17 @@ def server(input, output, session):
                 alpha=0.12,
                 color="lightgray"
             )
+
+            if bool(input.show_global_labels_cooc()):
+                for _, row in df_global.iterrows():
+                    ax.annotate(
+                        row["word"],
+                        (row["x"], row["y"]),
+                        xytext=(2, 2),
+                        textcoords="offset points",
+                        fontsize=4,
+                        alpha=0.28,
+                    )
         
         if bool(input.show_word_labels_cooc()):
             for _, row in sub.iterrows():
@@ -1358,7 +1536,9 @@ def server(input, output, session):
             target_word=word,
             window_size=int(input.cooc_window_size()),
             topn=int(input.cooc_top_neighbors_n()),
+            min_frequency=int(input.cooc_min_token_frequency()),
         )
+        df = rename_token_column_for_display(df, run_name)
 
         return ui.card(
             ui.card_header(f"Sous-corpus : {label}"),
@@ -1391,7 +1571,9 @@ def server(input, output, session):
             target_word=word,
             window_size=window_size,
             topn=topn,
+            min_frequency=int(input.cooc_min_token_frequency()),
         )
+        df = rename_token_column_for_display(df, run_name)
 
         return ui.card(
             ui.card_header(f"Sous-corpus : {label}"),
@@ -1426,6 +1608,7 @@ def server(input, output, session):
             window_size=window_size,
             topn_words=topn_words,
             topn_contexts=topn_contexts,
+            min_frequency=int(input.cooc_min_token_frequency()),
         )
 
         return ui.card(
@@ -1483,7 +1666,7 @@ def server(input, output, session):
         run_name = input.run_name()
     
         global_model = load_global_model(run_name)
-        allowed_pos = tuple(input.pos_filter_global()) if input.pos_filter_global() else tuple()
+        allowed_pos = selected_pos(input.cooc_shift_pos_filter())
         top_n = int(input.top_words_global())
     
         allowed_words = select_words_by_pos_then_topn(global_model, allowed_pos, top_n) if global_model else None
