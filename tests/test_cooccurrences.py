@@ -10,6 +10,7 @@ if str(SRC) not in sys.path:
 
 from cooccurrences import (
     characteristic_contexts_for_word_cooc,
+    compute_cooc_pca,
     top_cooccurring_words,
     top_similar_words_by_cooc,
 )
@@ -102,6 +103,64 @@ class CooccurrenceTests(unittest.TestCase):
 
         self.assertEqual(df.iloc[0]["word"], "emploi")
         self.assertGreater(float(df.iloc[0]["similarity"]), 0.0)
+        self.assertEqual(int(df.iloc[0]["frequency"]), 1)
+        self.assertIn("frequency", df.columns)
+
+    def test_min_frequency_filters_cooccurrence_candidates(self):
+        sentences = [
+            ["travail", "rare"],
+            ["travail", "commun"],
+            ["travail", "commun"],
+        ]
+
+        df = top_cooccurring_words(
+            sentences=sentences,
+            target_word="travail",
+            window_size=1,
+            topn=5,
+            min_frequency=2,
+        )
+
+        self.assertIn("commun", df["word"].tolist())
+        self.assertNotIn("rare", df["word"].tolist())
+
+    def test_min_frequency_filters_similar_candidates_by_token_frequency(self):
+        sentences = [
+            ["ouvrier", "travail", "salaire"],
+            ["ouvrier", "emploi", "salaire"],
+            ["ouvrier", "ouvrage", "salaire"],
+            ["ouvrier", "ouvrage", "salaire"],
+        ]
+
+        df = top_similar_words_by_cooc(
+            sentences=sentences,
+            target_word="travail",
+            window_size=1,
+            topn=5,
+            min_frequency=2,
+        )
+
+        self.assertIn("ouvrage", df["word"].tolist())
+        self.assertNotIn("emploi", df["word"].tolist())
+
+    def test_compute_cooc_pca_all_uses_min_count_vocab_before_display_selection(self):
+        sentences = [
+            ["alpha", "beta", "gamma", "delta", "epsilon", "rare"],
+            ["alpha", "beta", "gamma", "delta", "epsilon"],
+        ]
+
+        df, meta = compute_cooc_pca(
+            sentences=sentences,
+            allowed_pos=("ALL",),
+            top_n=10,
+            window_size=1,
+            n_clusters=2,
+            min_count=2,
+        )
+
+        self.assertEqual(meta["n_vocab_total"], 5)
+        self.assertEqual(meta["n_words"], 5)
+        self.assertNotIn("rare", df["word"].tolist())
 
 
 if __name__ == "__main__":
