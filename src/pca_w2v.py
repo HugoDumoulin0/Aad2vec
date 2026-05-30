@@ -283,6 +283,9 @@ def filter_words_by_pos(words, allowed_pos):
         return words
 
     allowed_pos = set(allowed_pos)
+    if "ALL" in allowed_pos:
+        return words
+
     return [w for w in words if get_word_pos(w) in allowed_pos]
 
 
@@ -399,7 +402,6 @@ def global_pca_filepaths(run_name, allowed_pos, top_n):
     )
     meta_path = csv_path.replace(".csv", ".meta.json")
     return csv_path, meta_path
-
 
 
 
