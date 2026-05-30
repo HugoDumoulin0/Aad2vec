@@ -11,6 +11,7 @@ RUNS_DIR = "../outputs/runs"
 COMPLETE_CORPUS_LABEL = "Corpus complet"
 
 POS_OPTIONS = [
+    "ALL",
     "NOUN", "PROPN", "ADJ", "VERB", "ADV",
     "ADP", "DET", "PRON", "AUX", "CCONJ",
     "SCONJ", "NUM", "INTJ",
