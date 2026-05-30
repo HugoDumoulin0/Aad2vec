@@ -20,6 +20,7 @@ from utils import normalize_rows, sentence_tokens
 
 
 COOC_CACHE = {}
+COOC_MATRIX_CACHE = {}
 
 
 def build_cooc_matrix(sentences, vocab, window_size=4):
@@ -56,11 +57,87 @@ def build_cooc_matrix(sentences, vocab, window_size=4):
     return M
 
 
-def top_cooccurring_words(sentences, target_word, window_size=4, topn=20):
+def _notify(status_callback, message):
+    if status_callback is not None:
+        status_callback(message)
+
+
+def build_full_ppmi_matrix(
+    sentences,
+    window_size=5,
+    min_count=1,
+    cache_key=None,
+    status_callback=None,
+):
+    if cache_key is not None and cache_key in COOC_MATRIX_CACHE:
+        _notify(status_callback, "Matrice PPMI complète récupérée depuis le cache.")
+        return COOC_MATRIX_CACHE[cache_key]
+
+    _notify(status_callback, "Construction du vocabulaire complet...")
+    all_tokens = []
+    for sent in sentences:
+        all_tokens.extend(sentence_tokens(sent))
+
+    counts = Counter(all_tokens)
+    min_count = max(1, int(min_count))
+    full_vocab = [
+        w for w, count in counts.most_common()
+        if count >= min_count
+    ]
+
+    if len(full_vocab) < 5:
+        result = (full_vocab, sp.csr_matrix((0, 0), dtype=np.float32))
+        if cache_key is not None:
+            COOC_MATRIX_CACHE[cache_key] = result
+        return result
+
+    _notify(status_callback, f"Construction de la matrice de cooccurrence ({len(full_vocab)} mots)...")
+    counts_matrix = build_cooc_matrix(
+        sentences=sentences,
+        vocab=full_vocab,
+        window_size=window_size,
+    )
+
+    if counts_matrix.nnz == 0:
+        result = (full_vocab, sp.csr_matrix(counts_matrix.shape, dtype=np.float32))
+        if cache_key is not None:
+            COOC_MATRIX_CACHE[cache_key] = result
+        return result
+
+    _notify(status_callback, "Calcul de la matrice PPMI complète...")
+    coo = counts_matrix.tocoo()
+    total = float(counts_matrix.sum())
+    row_sum = np.asarray(counts_matrix.sum(axis=1)).ravel()
+    col_sum = np.asarray(counts_matrix.sum(axis=0)).ravel()
+
+    denominator = row_sum[coo.row] * col_sum[coo.col]
+    valid = denominator > 0
+
+    ppmi_data = np.zeros_like(coo.data, dtype=np.float32)
+    ppmi_data[valid] = np.log((coo.data[valid].astype(float) * total) / denominator[valid])
+    ppmi_data[ppmi_data < 0] = 0.0
+
+    positive = ppmi_data > 0
+    ppmi = sp.csr_matrix(
+        (ppmi_data[positive], (coo.row[positive], coo.col[positive])),
+        shape=counts_matrix.shape,
+        dtype=np.float32,
+    )
+
+    result = (full_vocab, ppmi)
+    if cache_key is not None:
+        COOC_MATRIX_CACHE[cache_key] = result
+
+    return result
+
+
+def top_cooccurring_words(sentences, target_word, window_size=4, topn=20, min_frequency=1):
     if not sentences or not target_word:
         return pd.DataFrame(columns=["rank", "word", "ppmi", "cooccurrences"])
 
     target_word = str(target_word)
+    min_frequency = max(1, int(min_frequency))
+    token_counts = Counter()
     pair_counts = Counter()
     row_totals = Counter()
     col_totals = Counter()
@@ -68,6 +145,7 @@ def top_cooccurring_words(sentences, target_word, window_size=4, topn=20):
 
     for sent in sentences:
         toks = [str(t) for t in sentence_tokens(sent)]
+        token_counts.update(toks)
 
         for i, center_word in enumerate(toks):
             start = max(0, i - int(window_size))
@@ -93,6 +171,9 @@ def top_cooccurring_words(sentences, target_word, window_size=4, topn=20):
         if center_word != target_word or word == target_word:
             continue
 
+        if token_counts[word] < min_frequency:
+            continue
+
         denominator = target_total * float(col_totals[word])
         if denominator == 0.0:
             ppmi = 0.0
@@ -116,6 +197,13 @@ def top_cooccurring_words(sentences, target_word, window_size=4, topn=20):
         row["rank"] = rank
 
     return pd.DataFrame(rows, columns=["rank", "word", "ppmi", "cooccurrences"])
+
+
+def _token_counts(sentences):
+    counts = Counter()
+    for sent in sentences:
+        counts.update(str(t) for t in sentence_tokens(sent))
+    return counts
 
 
 def _cooc_count_stats(sentences, window_size=4):
@@ -169,18 +257,20 @@ def _ppmi_rows_from_counts(pair_counts, row_totals, col_totals, total_pairs):
     return rows
 
 
-def top_similar_words_by_cooc(sentences, target_word, window_size=4, topn=20):
+def top_similar_words_by_cooc(sentences, target_word, window_size=4, topn=20, min_frequency=1):
     if not sentences or not target_word:
-        return pd.DataFrame(columns=["rank", "word", "similarity"])
+        return pd.DataFrame(columns=["rank", "word", "similarity", "frequency"])
 
     target_word = str(target_word)
+    min_frequency = max(1, int(min_frequency))
+    token_counts = _token_counts(sentences)
     pair_counts, row_totals, col_totals, total_pairs = _cooc_count_stats(
         sentences=sentences,
         window_size=window_size,
     )
 
     if total_pairs == 0 or target_word not in row_totals:
-        return pd.DataFrame(columns=["rank", "word", "similarity"])
+        return pd.DataFrame(columns=["rank", "word", "similarity", "frequency"])
 
     ppmi_rows = _ppmi_rows_from_counts(
         pair_counts=pair_counts,
@@ -191,16 +281,19 @@ def top_similar_words_by_cooc(sentences, target_word, window_size=4, topn=20):
     target_row = ppmi_rows.get(target_word, {})
 
     if not target_row:
-        return pd.DataFrame(columns=["rank", "word", "similarity"])
+        return pd.DataFrame(columns=["rank", "word", "similarity", "frequency"])
 
     target_norm = np.sqrt(sum(v * v for v in target_row.values()))
     if target_norm == 0.0:
-        return pd.DataFrame(columns=["rank", "word", "similarity"])
+        return pd.DataFrame(columns=["rank", "word", "similarity", "frequency"])
 
     rows = []
 
     for word, row in ppmi_rows.items():
         if word == target_word or not row:
+            continue
+
+        if token_counts[word] < min_frequency:
             continue
 
         row_norm = np.sqrt(sum(v * v for v in row.values()))
@@ -217,6 +310,7 @@ def top_similar_words_by_cooc(sentences, target_word, window_size=4, topn=20):
         rows.append({
             "word": word,
             "similarity": round(similarity, 4),
+            "frequency": int(token_counts[word]),
         })
 
     rows = sorted(
@@ -228,7 +322,7 @@ def top_similar_words_by_cooc(sentences, target_word, window_size=4, topn=20):
     for rank, row in enumerate(rows, start=1):
         row["rank"] = rank
 
-    return pd.DataFrame(rows, columns=["rank", "word", "similarity"])
+    return pd.DataFrame(rows, columns=["rank", "word", "similarity", "frequency"])
 
 
 def characteristic_contexts_for_word_cooc(
@@ -237,12 +331,14 @@ def characteristic_contexts_for_word_cooc(
     window_size=4,
     topn_words=20,
     topn_contexts=10,
+    min_frequency=1,
 ):
     cooc_df = top_cooccurring_words(
         sentences=sentences,
         target_word=target_word,
         window_size=window_size,
         topn=topn_words,
+        min_frequency=min_frequency,
     )
 
     columns = [
@@ -378,76 +474,64 @@ def compute_global_cooc_pca(run_name, allowed_words=None, n_components=100, wind
 
 def compute_cooc_pca(
     sentences,
-    allowed_pos=("NOUN",),
+    allowed_pos=("ALL",),
     top_n=500,
     window_size=5,
     n_clusters=8,
+    min_count=1,
     cluster_on_pca=True,
+    matrix_cache_key=None,
+    status_callback=None,
 ):
     if not sentences:
         return pd.DataFrame(columns=["word", "x", "y", "cluster"]), {}
 
-    tokens = []
     allowed_pos = set(allowed_pos) if allowed_pos else None
+    if allowed_pos and "ALL" in allowed_pos:
+        allowed_pos = None
 
-    for sent in sentences:
-        toks = sentence_tokens(sent)
-        for tok in toks:
-            if allowed_pos and get_word_pos(tok) not in allowed_pos:
-                continue
-            tokens.append(tok)
+    full_vocab, ppmi = build_full_ppmi_matrix(
+        sentences=sentences,
+        window_size=window_size,
+        min_count=min_count,
+        cache_key=matrix_cache_key,
+        status_callback=status_callback,
+    )
 
-    counts = Counter(tokens)
-    vocab = [w for w, _ in counts.most_common(int(top_n))]
-
-    if len(vocab) < 5:
+    if len(full_vocab) < 5:
         return pd.DataFrame(columns=["word", "x", "y", "cluster"]), {}
 
-    vocab_index = {w: i for i, w in enumerate(vocab)}
-    n = len(vocab)
-
-    M = np.zeros((n, n), dtype=np.float32)
-
-    for sent in sentences:
-        toks = sentence_tokens(sent)
-        filtered = [tok for tok in toks if tok in vocab_index]
-
-        for i, center in enumerate(filtered):
-            ci = vocab_index[center]
-            start = max(0, i - window_size)
-            end = min(len(filtered), i + window_size + 1)
-
-            for j in range(start, end):
-                if i == j:
-                    continue
-                cj = vocab_index[filtered[j]]
-                M[ci, cj] += 1.0
-
-    if M.sum() == 0:
+    vocab_index = {w: i for i, w in enumerate(full_vocab)}
+    if ppmi.nnz == 0:
         return pd.DataFrame(columns=["word", "x", "y", "cluster"]), {}
 
-    total = M.sum()
-    row_sum = M.sum(axis=1, keepdims=True)
-    col_sum = M.sum(axis=0, keepdims=True)
+    _notify(status_callback, "Sélection des mots affichés...")
+    selected_words = full_vocab
+    if allowed_pos:
+        selected_words = [
+            w for w in full_vocab
+            if get_word_pos(w) in allowed_pos
+        ]
 
-    expected = row_sum @ col_sum / total
+    if top_n is not None:
+        selected_words = selected_words[:int(top_n)]
 
-    with np.errstate(divide="ignore", invalid="ignore"):
-        ppmi = np.log((M * total) / expected)
+    if len(selected_words) < 5:
+        return pd.DataFrame(columns=["word", "x", "y", "cluster"]), {}
 
-    ppmi[np.isinf(ppmi)] = 0.0
-    ppmi[np.isnan(ppmi)] = 0.0
-    ppmi[ppmi < 0] = 0.0
+    selected_indices = [vocab_index[w] for w in selected_words]
+    ppmi_selected = ppmi[selected_indices, :]
 
-    dim = min(100, max(2, len(vocab) - 1))
+    _notify(status_callback, f"Réduction SVD + ACP sur {len(selected_words)} mots...")
+    dim = min(100, max(2, min(ppmi_selected.shape) - 1))
     svd = TruncatedSVD(n_components=dim, random_state=42)
-    X = svd.fit_transform(ppmi)
+    X = svd.fit_transform(ppmi_selected)
     X = normalize_rows(X)
 
     pca = PCA(n_components=2, random_state=42)
     XY = pca.fit_transform(X)
 
-    n_clusters = max(2, min(int(n_clusters), len(vocab) - 1))
+    n_clusters = max(2, min(int(n_clusters), len(selected_words) - 1))
     X_cluster = XY if cluster_on_pca else X
 
     clustering = AgglomerativeClustering(
@@ -459,7 +543,7 @@ def compute_cooc_pca(
     cluster_labels = clustering.fit_predict(X_cluster)
 
     df = pd.DataFrame({
-        "word": vocab,
+        "word": selected_words,
         "x": XY[:, 0],
         "y": XY[:, 1],
         "cluster": cluster_labels,
@@ -467,8 +551,10 @@ def compute_cooc_pca(
 
     meta = {
         "explained_variance_ratio": pca.explained_variance_ratio_.tolist(),
-        "n_words": len(vocab),
+        "n_words": len(selected_words),
+        "n_vocab_total": len(full_vocab),
         "n_clusters": n_clusters,
+        "min_count": min_count,
     }
 
     return df, meta
