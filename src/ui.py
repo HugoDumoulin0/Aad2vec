@@ -48,7 +48,10 @@ app_ui = ui.page_fluid(
 
     ui.navset_tab(
         ui.nav_panel(
-            "ACP clusters",
+            "Word2vec",
+            ui.navset_tab(
+                ui.nav_panel(
+            "ACP et clustering",
             ui.row(
                 ui.column(
                     4,
@@ -177,7 +180,7 @@ app_ui = ui.page_fluid(
         
         
         ui.nav_panel(
-            "Évolution d’un mot",
+            "Trajectoire distributionnelle",
 
             ui.h4("Projection globale alignée"),
             
@@ -309,8 +312,14 @@ app_ui = ui.page_fluid(
             ),
             ui.output_data_frame("word_spread_table"),
             ),
+            ),
+        ),
         
-    ui.nav_panel("Cooccurrences",
+    ui.nav_panel(
+        "Cooccurrences linéaires",
+        ui.navset_tab(
+            ui.nav_panel(
+                "ACP et clustering",
 
     ui.h4("Projection par cooccurrences"),
     
@@ -417,7 +426,7 @@ app_ui = ui.page_fluid(
         
         
         ui.nav_panel(
-    "Évolution (cooccurrences)",
+    "Trajectoire distributionnelle",
     
     ui.row(
     ui.column(
@@ -521,3 +530,5 @@ app_ui = ui.page_fluid(
 )
     )
     )
+    )
+)
