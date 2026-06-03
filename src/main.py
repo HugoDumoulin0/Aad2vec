@@ -35,6 +35,7 @@ RUNS_DIR = os.path.join(OUTPUT_DIR, "runs")
 
 LAUNCHER_JSON = "launcher_choice.json"
 SUBCORPORA_JSON = "subcorpora.json"
+SPACY_MAX_CHARS_PER_CHUNK = 200_000
 
 def kill_process_on_port(port):
     try:
@@ -193,50 +194,83 @@ def build_subcorpora_from_files_dict(groups, base_path=CORPUS_PATH):
     return subcorpora
 
 
+def iter_spacy_chunks(text, max_chars=SPACY_MAX_CHARS_PER_CHUNK):
+    text = str(text)
+    start = 0
+    n_chars = len(text)
+
+    while start < n_chars:
+        end = min(start + max_chars, n_chars)
+
+        if end < n_chars:
+            split_at = -1
+            for sep in ("\n\n", "\n", ". ", "! ", "? ", "… ", "; "):
+                idx = text.rfind(sep, start, end)
+                if idx > start + max_chars // 2:
+                    split_at = idx + len(sep)
+                    break
+
+            if split_at == -1:
+                idx = text.rfind(" ", start, end)
+                if idx > start:
+                    split_at = idx + 1
+
+            if split_at != -1:
+                end = split_at
+
+        chunk = text[start:end].strip()
+        if chunk:
+            yield chunk
+
+        start = end
+
+
 def tokenize(corpus_liste, lowercase=True, token_representation="word"):
     nlp = spacy.load("fr_core_news_sm")
+    nlp.max_length = max(nlp.max_length, SPACY_MAX_CHARS_PER_CHUNK + 1)
     corpus_sentences = []
 
     for texte in corpus_liste:
-        doc = nlp(texte, disable=["ner"])
+        for chunk in iter_spacy_chunks(texte):
+            doc = nlp(chunk, disable=["ner"])
 
-        for sent in doc.sents:
-            word_tokens = []
-            lemma_tokens = []
+            for sent in doc.sents:
+                word_tokens = []
+                lemma_tokens = []
 
-            for token in sent:
-                if token.is_space or token.is_punct:
+                for token in sent:
+                    if token.is_space or token.is_punct:
+                        continue
+
+                    word = str(token.text).strip()
+                    lemma = str(token.lemma_).strip()
+
+                    if not word:
+                        continue
+
+                    if not lemma or lemma == "-PRON-":
+                        lemma = word
+
+                    if lowercase:
+                        word = word.lower()
+                        lemma = lemma.lower()
+
+                    word_tokens.append(word)
+                    lemma_tokens.append(lemma)
+
+                if not word_tokens:
                     continue
 
-                word = str(token.text).strip()
-                lemma = str(token.lemma_).strip()
+                train_tokens = lemma_tokens if token_representation == "lemma" else word_tokens
 
-                if not word:
-                    continue
-
-                if not lemma or lemma == "-PRON-":
-                    lemma = word
-
-                if lowercase:
-                    word = word.lower()
-                    lemma = lemma.lower()
-
-                word_tokens.append(word)
-                lemma_tokens.append(lemma)
-
-            if not word_tokens:
-                continue
-
-            train_tokens = lemma_tokens if token_representation == "lemma" else word_tokens
-
-            corpus_sentences.append(
-                {
-                    "tokens": train_tokens,
-                    "word": word_tokens,
-                    "lemma": lemma_tokens,
-                    "surface_text": " ".join(word_tokens),
-                }
-            )
+                corpus_sentences.append(
+                    {
+                        "tokens": train_tokens,
+                        "word": word_tokens,
+                        "lemma": lemma_tokens,
+                        "surface_text": " ".join(word_tokens),
+                    }
+                )
 
     return corpus_sentences
 
