@@ -970,7 +970,7 @@ def server(input, output, session):
                 "max_pairwise_dist_2d",
                 "mean_pairwise_dist_2d",
                 "farthest_pair",
-            ]))
+            ]), selection_mode="row")
     
         top_n = int(input.top_spread_words())
         df_spread = df_spread.head(top_n).copy()
@@ -979,7 +979,33 @@ def server(input, output, session):
         df_spread["max_pairwise_dist_2d"] = df_spread["max_pairwise_dist_2d"].round(4)
         df_spread["mean_pairwise_dist_2d"] = df_spread["mean_pairwise_dist_2d"].round(4)
     
-        return render.DataGrid(df_spread)
+        return render.DataGrid(df_spread, selection_mode="row")
+
+    @reactive.Effect
+    def _update_tracked_word_from_spread_selection():
+        selected = word_spread_table.data_view(selected=True)
+
+        if selected is None or selected.empty or "word" not in selected.columns:
+            return
+
+        word = str(selected.iloc[0]["word"])
+
+        df_global, _, df_positions_all = global_shift_data()
+        if df_global.empty or df_positions_all.empty:
+            return
+
+        available = set(df_positions_all["word"].dropna().astype(str).tolist())
+        words = [w for w in df_global["word"].dropna().astype(str).tolist() if w in available]
+
+        if word not in words:
+            return
+
+        ui.update_selectize(
+            "tracked_word",
+            choices=words,
+            selected=word,
+            session=session,
+        )
     
     # ---- neighbors for word
     @output
