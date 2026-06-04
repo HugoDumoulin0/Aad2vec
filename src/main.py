@@ -8,6 +8,7 @@ Created on Thu May 21 11:49:45 2026
 
 import os
 import json
+import csv
 import time
 import signal
 import subprocess
@@ -384,10 +385,9 @@ def build_semantic_shift_outputs(global_model, sub_models_dict, shift_dir, top_w
         }
     )
 
-    df_global.to_csv(
+    save_csv_safe(
+        df_global,
         os.path.join(shift_dir, "global_pca_words.csv"),
-        index=False,
-        encoding="utf-8",
     )
 
     rows = []
@@ -425,10 +425,9 @@ def build_semantic_shift_outputs(global_model, sub_models_dict, shift_dir, top_w
 
     df_shift = pd.DataFrame(rows)
 
-    df_shift.to_csv(
+    save_csv_safe(
+        df_shift,
         os.path.join(shift_dir, "word_positions_by_subcorpus.csv"),
-        index=False,
-        encoding="utf-8",
     )
 
     meta = {
@@ -503,6 +502,17 @@ def save_run_metadata(run_dir, training_config, subcorpora_labels):
 
     with open(path, "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
+
+
+def save_csv_safe(df, path):
+    df.to_csv(
+        path,
+        index=False,
+        encoding="utf-8",
+        quoting=csv.QUOTE_MINIMAL,
+        doublequote=True,
+        escapechar="\\",
+    )
 
 
 def process_subcorpora(path_json):
